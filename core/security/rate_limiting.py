@@ -11,6 +11,15 @@ import redis.asyncio as redis
 
 logger = logging.getLogger(__name__)
 
+# Constants
+DEFAULT_BAN_DURATION = 3600  # 1 hour in seconds
+VIOLATION_WINDOW = 300  # 5 minutes in seconds
+MAX_VIOLATIONS_BEFORE_BAN = 5
+# Rate limit tuples: (max_requests, window_seconds)
+DEFAULT_API_RATE_LIMIT = (100, 60)  # 100 requests per 60 seconds
+DEFAULT_WS_RATE_LIMIT = (30, 60)  # 30 connections per 60 seconds
+DEFAULT_METRICS_RATE_LIMIT = (10, 60)  # 10 requests per 60 seconds
+
 
 class RateLimiter:
     """Redis-based rate limiter using sliding window algorithm."""
@@ -35,12 +44,21 @@ class RateLimiter:
 
         Args:
             key: Unique identifier (e.g., IP address or user ID)
-            limit: Maximum number of requests allowed
-            window: Time window in seconds
+            limit: Maximum number of requests allowed (must be positive)
+            window: Time window in seconds (must be positive)
 
         Returns:
             Tuple of (allowed: bool, remaining: int)
+            
+        Raises:
+            ValueError: If limit or window are not positive integers
         """
+        # Validate inputs
+        if limit <= 0:
+            raise ValueError(f"Rate limit must be positive, got {limit}")
+        if window <= 0:
+            raise ValueError(f"Time window must be positive, got {window}")
+        
         now = time.time()
         window_start = now - window
 
@@ -68,7 +86,7 @@ class RateLimiter:
 class DDoSProtection:
     """DDoS protection with IP banning and advanced rate limiting."""
 
-    def __init__(self, redis_client: redis.Redis, ban_duration: int = 3600):
+    def __init__(self, redis_client: redis.Redis, ban_duration: int = DEFAULT_BAN_DURATION):
         """
         Initialize DDoS protection.
 
@@ -145,9 +163,9 @@ class DDoSProtection:
             # Ban IP if it exceeds limit multiple times
             violation_key = f"violations:{ip}"
             violations = await self.redis.incr(violation_key)
-            await self.redis.expire(violation_key, 300)  # 5 minutes
+            await self.redis.expire(violation_key, VIOLATION_WINDOW)  # 5 minutes
 
-            if violations >= 5:
+            if violations >= MAX_VIOLATIONS_BEFORE_BAN:
                 await self.ban_ip(ip, "Multiple rate limit violations")
 
             logger.warning(f"Rate limit exceeded for {ip} on {endpoint}")
@@ -171,9 +189,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.ddos_protection = DDoSProtection(redis_client)
         self.rules = rules or {
-            "/api/": (100, 60),      # 100 requests per minute
-            "/ws/": (30, 60),         # 30 connections per minute
-            "/metrics": (10, 60),     # 10 requests per minute
+            "/api/": DEFAULT_API_RATE_LIMIT,      # 100 requests per minute
+            "/ws/": DEFAULT_WS_RATE_LIMIT,         # 30 connections per minute
+            "/metrics": DEFAULT_METRICS_RATE_LIMIT, # 10 requests per minute
         }
 
     def get_client_ip(self, request: Request) -> str:

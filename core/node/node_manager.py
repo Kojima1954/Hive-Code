@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import time
+from collections import deque
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from typing import Dict, List, Optional, Any
@@ -20,6 +21,11 @@ from core.monitoring.metrics import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Constants
+MAX_MESSAGE_QUEUE_SIZE = 1000
+MAX_CONTEXT_MESSAGES = 10
+AI_AGENT_CONTEXT_WINDOW = 5  # Number of recent messages to include in AI context
 
 
 class ParticipantType(Enum):
@@ -164,9 +170,9 @@ class OllamaAgent(BaseAgent):
             # Build conversation context
             messages = [{"role": "system", "content": self.system_prompt}]
             
-            # Add recent context
+            # Add recent context (use constant for window size)
             if context:
-                for ctx_msg in context[-5:]:  # Last 5 messages
+                for ctx_msg in context[-AI_AGENT_CONTEXT_WINDOW:]:  # Last N messages
                     role = "user" if ctx_msg.sender != self.agent_id else "assistant"
                     messages.append({"role": role, "content": ctx_msg.content})
             
@@ -230,9 +236,9 @@ class HumanAINode:
         self.participants: Dict[str, NodeParticipant] = {}
         self.agents: Dict[str, BaseAgent] = {}
         
-        # Message queue
-        self.message_queue: List[Message] = []
-        self.max_queue_size = 1000
+        # Message queue (use deque for O(1) operations)
+        self.message_queue: deque = deque(maxlen=MAX_MESSAGE_QUEUE_SIZE)  # Auto-removes old messages
+        self.max_queue_size = MAX_MESSAGE_QUEUE_SIZE  # Kept for backwards compatibility
         
         # Redis pub/sub
         self.pubsub = self.redis.pubsub()
@@ -354,7 +360,8 @@ class HumanAINode:
         sender_id: str,
         content: str,
         encrypt: bool = False,
-        store_in_memory: bool = True
+        store_in_memory: bool = True,
+        trigger_agents: bool = True
     ) -> Message:
         """
         Process and route a message.
@@ -364,6 +371,7 @@ class HumanAINode:
             content: Message content
             encrypt: Whether to encrypt the message
             store_in_memory: Whether to store in memory
+            trigger_agents: Whether to trigger AI agent responses (prevents infinite recursion)
             
         Returns:
             Processed message
@@ -379,10 +387,8 @@ class HumanAINode:
             encrypted=encrypt
         )
         
-        # Add to queue
+        # Add to queue (deque automatically handles max size)
         self.message_queue.append(message)
-        if len(self.message_queue) > self.max_queue_size:
-            self.message_queue.pop(0)
         
         # Store in memory
         if store_in_memory:
@@ -405,8 +411,9 @@ class HumanAINode:
             {"node_id": self.node_id, "message_type": "text"}
         )
         
-        # Process with AI agents if applicable
-        await self._process_with_agents(message)
+        # Process with AI agents if applicable (only for non-agent messages to prevent infinite loops)
+        if trigger_agents:
+            await self._process_with_agents(message)
         
         logger.debug(f"Processed message from {sender_id}")
         return message
@@ -437,15 +444,16 @@ class HumanAINode:
             try:
                 response_content = await agent.generate_response(
                     content,
-                    context=self.message_queue[-10:]  # Last 10 messages as context
+                    context=list(self.message_queue)[-MAX_CONTEXT_MESSAGES:]  # Last N messages as context
                 )
                 
-                # Send agent response
+                # Send agent response (with trigger_agents=False to prevent infinite recursion)
                 await self.process_message(
                     sender_id=agent_id,
                     content=response_content,
                     encrypt=message.encrypted,
-                    store_in_memory=True
+                    store_in_memory=True,
+                    trigger_agents=False  # Critical: prevent agents from responding to each other
                 )
                 
             except Exception as e:
@@ -491,7 +499,9 @@ class HumanAINode:
         Returns:
             List of recent messages
         """
-        return self.message_queue[-limit:]
+        # Convert deque to list and get last N messages
+        messages = list(self.message_queue)
+        return messages[-limit:] if len(messages) > limit else messages
     
     async def generate_node_summary(self) -> str:
         """

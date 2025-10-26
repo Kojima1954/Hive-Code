@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 import jwt
@@ -175,6 +175,26 @@ def create_app(
     Returns:
         Configured FastAPI app
     """
+    # Validate JWT secret strength
+    if jwt_secret in ["change-this", "change-this-secret-key", "test", "demo"]:
+        logger.warning(
+            "⚠️  SECURITY WARNING: Using weak or default JWT secret! "
+            "This is INSECURE for production. Set a strong JWT_SECRET environment variable."
+        )
+    
+    if len(jwt_secret) < 32:
+        logger.warning(
+            f"⚠️  SECURITY WARNING: JWT secret is only {len(jwt_secret)} characters. "
+            "Recommend at least 32 characters for production use."
+        )
+    
+    # Validate CORS configuration
+    if "*" in allowed_origins:
+        logger.warning(
+            "⚠️  SECURITY WARNING: CORS allows all origins (*). "
+            "This is INSECURE for production. Set specific ALLOWED_ORIGINS."
+        )
+    
     app = FastAPI(
         title="Conversational Swarm Intelligence Network",
         description="Production-ready swarm intelligence network with AI agents",
@@ -278,7 +298,7 @@ def create_app(
         payload = {
             "user_id": user_id,
             "username": username,
-            "exp": datetime.utcnow() + timedelta(hours=24)
+            "exp": datetime.now(timezone.utc) + timedelta(hours=24)
         }
         return jwt.encode(payload, app.state.jwt_secret, algorithm="HS256")
     
@@ -331,13 +351,25 @@ def create_app(
     
     @app.post("/api/auth/login")
     async def login(username: str, password: str = "demo"):
-        """Login endpoint (simplified for demo)."""
+        """
+        Login endpoint (DEMO ONLY - accepts any credentials).
+        
+        ⚠️  WARNING: This is a simplified demo authentication.
+        In production, you MUST:
+        - Verify credentials against a real user database
+        - Use proper password hashing (bcrypt, argon2, etc.)
+        - Implement rate limiting on login attempts
+        - Add CAPTCHA for brute force protection
+        - Log authentication attempts
+        """
         # In production, verify against a real user database
         user_id = f"user_{username}"
         token = create_token(user_id, username)
         
         # Add user to node
         await app.state.node.add_human_participant(user_id, username)
+        
+        logger.info(f"User logged in: {username} (DEMO MODE)")
         
         return {
             "token": token,
