@@ -15,9 +15,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_BAN_DURATION = 3600  # 1 hour in seconds
 VIOLATION_WINDOW = 300  # 5 minutes in seconds
 MAX_VIOLATIONS_BEFORE_BAN = 5
-DEFAULT_API_RATE_LIMIT = (100, 60)  # (requests, window_seconds)
-DEFAULT_WS_RATE_LIMIT = (30, 60)
-DEFAULT_METRICS_RATE_LIMIT = (10, 60)
+# Rate limit tuples: (max_requests, window_seconds)
+DEFAULT_API_RATE_LIMIT = (100, 60)  # 100 requests per 60 seconds
+DEFAULT_WS_RATE_LIMIT = (30, 60)  # 30 connections per 60 seconds
+DEFAULT_METRICS_RATE_LIMIT = (10, 60)  # 10 requests per 60 seconds
 
 
 class RateLimiter:

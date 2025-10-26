@@ -108,7 +108,7 @@ class DiffMemManager:
         if EMBEDDINGS_AVAILABLE:
             try:
                 self.embedding_model = SentenceTransformer(DEFAULT_EMBEDDING_MODEL)
-                logger.info(f"Loaded sentence-transformers embedding model: {DEFAULT_EMBEDDING_MODEL}")
+                logger.info("Loaded sentence-transformers embedding model: %s", DEFAULT_EMBEDDING_MODEL)
             except Exception as e:
                 logger.warning(f"Failed to load embedding model: {e}")
         
