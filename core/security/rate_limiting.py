@@ -35,12 +35,21 @@ class RateLimiter:
 
         Args:
             key: Unique identifier (e.g., IP address or user ID)
-            limit: Maximum number of requests allowed
-            window: Time window in seconds
+            limit: Maximum number of requests allowed (must be positive)
+            window: Time window in seconds (must be positive)
 
         Returns:
             Tuple of (allowed: bool, remaining: int)
+            
+        Raises:
+            ValueError: If limit or window are not positive integers
         """
+        # Validate inputs
+        if limit <= 0:
+            raise ValueError(f"Rate limit must be positive, got {limit}")
+        if window <= 0:
+            raise ValueError(f"Time window must be positive, got {window}")
+        
         now = time.time()
         window_start = now - window
 

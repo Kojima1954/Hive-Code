@@ -9,6 +9,13 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+# Constants
+RSA_KEY_SIZE = 4096
+RSA_PUBLIC_EXPONENT = 65537
+AES_KEY_SIZE = 256
+AES_NONCE_SIZE = 12
+RSA_ENCRYPTION_THRESHOLD = 470  # Max bytes for direct RSA encryption
+
 
 class HybridEncryption:
     """Hybrid encryption using RSA-4096 for key exchange and AES-GCM for data encryption."""
@@ -16,8 +23,8 @@ class HybridEncryption:
     def __init__(self):
         """Initialize hybrid encryption with RSA key pair generation."""
         self.private_key = rsa.generate_private_key(
-            public_exponent=65537,
-            key_size=4096,
+            public_exponent=RSA_PUBLIC_EXPONENT,
+            key_size=RSA_KEY_SIZE,
             backend=default_backend()
         )
         self.public_key = self.private_key.public_key()
@@ -52,7 +59,7 @@ class HybridEncryption:
         """
         Encrypt data using hybrid encryption (AES-GCM + RSA).
 
-        For messages larger than 470 bytes, uses AES-GCM encryption with RSA-encrypted key.
+        For messages larger than RSA_ENCRYPTION_THRESHOLD bytes, uses AES-GCM encryption with RSA-encrypted key.
         For smaller messages, uses RSA directly.
 
         Args:
@@ -62,11 +69,11 @@ class HybridEncryption:
         Returns:
             Tuple of (encrypted_data, encrypted_key, nonce)
         """
-        if len(data) > 470:  # Use hybrid encryption for large messages
+        if len(data) > RSA_ENCRYPTION_THRESHOLD:  # Use hybrid encryption for large messages
             # Generate random AES key
-            aes_key = AESGCM.generate_key(bit_length=256)
+            aes_key = AESGCM.generate_key(bit_length=AES_KEY_SIZE)
             aesgcm = AESGCM(aes_key)
-            nonce = os.urandom(12)
+            nonce = os.urandom(AES_NONCE_SIZE)
 
             # Encrypt data with AES-GCM
             encrypted_data = aesgcm.encrypt(nonce, data, None)

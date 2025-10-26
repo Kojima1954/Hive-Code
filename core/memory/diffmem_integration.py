@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import threading
 import time
 import zlib
 from dataclasses import dataclass, field, asdict
@@ -88,6 +89,9 @@ class DiffMemManager:
         # Memory cache
         self.memories: List[MemoryEntry] = []
         self.executor = ThreadPoolExecutor(max_workers=2)
+        
+        # Thread lock for Git operations
+        self._git_lock = threading.Lock()
         
         # Initialize embedding model if available
         self.embedding_model = None
@@ -218,32 +222,34 @@ class DiffMemManager:
         )
     
     def _save_to_git_sync(self, memory: MemoryEntry):
-        """Synchronous Git save operation."""
-        try:
-            # Create filename from timestamp
-            filename = f"memory_{int(memory.timestamp * 1000)}.json"
-            filepath = self.repo_path / filename
-            
-            # Prepare data
-            data = memory.to_dict()
-            if self.compression_enabled and len(memory.content) > 1024:
-                # Compress large content
-                compressed = self._compress_content(memory.content)
-                data['content'] = compressed.hex()
-                data['compressed'] = True
-            
-            # Write to file
-            with open(filepath, 'w') as f:
-                json.dump(data, f, indent=2)
-            
-            # Git commit
-            self.repo.index.add([str(filepath)])
-            self.repo.index.commit(
-                f"Add memory: {memory.source} at {datetime.fromtimestamp(memory.timestamp)}"
-            )
-            
-        except Exception as e:
-            logger.error(f"Failed to save memory to Git: {e}")
+        """Synchronous Git save operation with thread safety."""
+        # Acquire lock to prevent concurrent Git operations
+        with self._git_lock:
+            try:
+                # Create filename from timestamp
+                filename = f"memory_{int(memory.timestamp * 1000)}.json"
+                filepath = self.repo_path / filename
+                
+                # Prepare data
+                data = memory.to_dict()
+                if self.compression_enabled and len(memory.content) > 1024:
+                    # Compress large content
+                    compressed = self._compress_content(memory.content)
+                    data['content'] = compressed.hex()
+                    data['compressed'] = True
+                
+                # Write to file
+                with open(filepath, 'w') as f:
+                    json.dump(data, f, indent=2)
+                
+                # Git commit
+                self.repo.index.add([str(filepath)])
+                self.repo.index.commit(
+                    f"Add memory: {memory.source} at {datetime.fromtimestamp(memory.timestamp)}"
+                )
+                
+            except Exception as e:
+                logger.error(f"Failed to save memory to Git: {e}")
     
     async def retrieve_memories(
         self,
