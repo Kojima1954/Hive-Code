@@ -357,11 +357,11 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## 🙏 Acknowledgments
 
-- **Ollama**: Local LLM inference
-- **FastAPI**: Modern Python web framework
-- **Redis**: In-memory data structure store
-- **Prometheus & Grafana**: Monitoring and visualization
-- **ActivityPub**: Decentralized social networking protocol
+- **[Ollama](https://github.com/ollama/ollama)**: Local LLM inference
+- **[FastAPI](https://github.com/tiangolo/fastapi)**: Modern Python web framework
+- **[Redis](https://github.com/redis/redis)**: In-memory data structure store
+- **[Prometheus](https://github.com/prometheus/prometheus) & [Grafana](https://github.com/grafana/grafana)**: Monitoring and visualization
+- **[ActivityPub](https://github.com/w3c/activitypub)**: Decentralized social networking protocol
 
 ## 📧 Support
 
