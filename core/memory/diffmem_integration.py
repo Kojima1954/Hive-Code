@@ -29,6 +29,16 @@ except ImportError:
     EMBEDDINGS_AVAILABLE = False
     logger.warning("sentence-transformers not available, using hash-based embeddings")
 
+# Constants
+DEFAULT_EMBEDDING_MODEL = 'all-MiniLM-L6-v2'
+DEFAULT_MAX_SIZE_MB = 1000
+DEFAULT_CONSOLIDATION_INTERVAL = 3600  # 1 hour in seconds
+COMPRESSION_THRESHOLD_BYTES = 1024  # Compress content larger than 1KB
+MEMORY_IMPORTANCE_THRESHOLD = 0.1  # Minimum importance to retain
+MEMORY_DECAY_HALF_LIFE_DAYS = 30  # Importance decay half-life
+DBSCAN_DEFAULT_EPS = 0.3
+DBSCAN_DEFAULT_MIN_SAMPLES = 2
+
 
 @dataclass
 class MemoryEntry:
@@ -63,8 +73,8 @@ class DiffMemManager:
         self,
         storage_path: str = "memory",
         compression_enabled: bool = True,
-        max_size_mb: int = 1000,
-        consolidation_interval: int = 3600
+        max_size_mb: int = DEFAULT_MAX_SIZE_MB,
+        consolidation_interval: int = DEFAULT_CONSOLIDATION_INTERVAL
     ):
         """
         Initialize DiffMem manager.
@@ -97,8 +107,8 @@ class DiffMemManager:
         self.embedding_model = None
         if EMBEDDINGS_AVAILABLE:
             try:
-                self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-                logger.info("Loaded sentence-transformers embedding model")
+                self.embedding_model = SentenceTransformer(DEFAULT_EMBEDDING_MODEL)
+                logger.info(f"Loaded sentence-transformers embedding model: {DEFAULT_EMBEDDING_MODEL}")
             except Exception as e:
                 logger.warning(f"Failed to load embedding model: {e}")
         
@@ -306,7 +316,7 @@ class DiffMemManager:
         
         return top_memories
     
-    async def cluster_memories(self, eps: float = 0.3, min_samples: int = 2) -> List[List[MemoryEntry]]:
+    async def cluster_memories(self, eps: float = DBSCAN_DEFAULT_EPS, min_samples: int = DBSCAN_DEFAULT_MIN_SAMPLES) -> List[List[MemoryEntry]]:
         """
         Cluster similar memories using DBSCAN.
         
@@ -350,11 +360,11 @@ class DiffMemManager:
         current_time = time.time()
         for memory in self.memories:
             age_days = (current_time - memory.timestamp) / 86400
-            decay_factor = np.exp(-age_days / 30)  # 30-day half-life
+            decay_factor = np.exp(-age_days / MEMORY_DECAY_HALF_LIFE_DAYS)  # Configurable half-life
             memory.importance *= decay_factor
         
         # Remove low-importance memories
-        self.memories = [m for m in self.memories if m.importance > 0.1]
+        self.memories = [m for m in self.memories if m.importance > MEMORY_IMPORTANCE_THRESHOLD]
         
         # Cluster and consolidate similar memories
         clusters = await self.cluster_memories()
