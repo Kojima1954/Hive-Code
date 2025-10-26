@@ -336,8 +336,9 @@ def create_app(
         user_id = f"user_{username}"
         token = create_token(user_id, username)
         
-        # Add user to node
-        await app.state.node.add_human_participant(user_id, username)
+        # Add user to node if initialized
+        if app.state.node:
+            await app.state.node.add_human_participant(user_id, username)
         
         return {
             "token": token,
@@ -351,6 +352,12 @@ def create_app(
         request: Request
     ):
         """Send a message."""
+        if not app.state.node:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Node not initialized"
+            )
+        
         # Extract user from token (simplified)
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
@@ -380,6 +387,12 @@ def create_app(
     @app.get("/api/messages/history")
     async def get_history(limit: int = 50):
         """Get message history."""
+        if not app.state.node:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Node not initialized"
+            )
+        
         messages = await app.state.node.get_conversation_history(limit)
         return [
             MessageResponse(
@@ -394,17 +407,33 @@ def create_app(
     @app.get("/api/node/summary")
     async def get_node_summary():
         """Get node summary."""
+        if not app.state.node:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Node not initialized"
+            )
+        
         summary = await app.state.node.generate_node_summary()
         return {"summary": summary}
     
     @app.get("/api/node/stats")
     async def get_node_stats():
         """Get node statistics."""
+        if not app.state.node:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Node not initialized"
+            )
+        
         return app.state.node.get_stats()
     
     @app.websocket("/ws/{user_id}")
     async def websocket_endpoint(websocket: WebSocket, user_id: str):
         """WebSocket endpoint for real-time chat."""
+        if not app.state.connection_manager or not app.state.node:
+            await websocket.close(code=1011, reason="Service not initialized")
+            return
+        
         await app.state.connection_manager.connect(user_id, websocket)
         
         # Add user to node
