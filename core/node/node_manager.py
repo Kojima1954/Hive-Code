@@ -262,9 +262,16 @@ class HumanAINode:
             
         Returns:
             Encrypted content (base64)
+            
+        Raises:
+            Exception: If encryption fails
         """
-        encrypted = self.cipher.encrypt(content.encode('utf-8'))
-        return encrypted.decode('utf-8')
+        try:
+            encrypted = self.cipher.encrypt(content.encode('utf-8'))
+            return encrypted.decode('utf-8')
+        except Exception as e:
+            logger.error(f"Message encryption failed: {e}")
+            raise
     
     def decrypt_message(self, encrypted_content: str) -> str:
         """
@@ -275,9 +282,16 @@ class HumanAINode:
             
         Returns:
             Decrypted content
+            
+        Raises:
+            Exception: If decryption fails
         """
-        decrypted = self.cipher.decrypt(encrypted_content.encode('utf-8'))
-        return decrypted.decode('utf-8')
+        try:
+            decrypted = self.cipher.decrypt(encrypted_content.encode('utf-8'))
+            return decrypted.decode('utf-8')
+        except Exception as e:
+            logger.error(f"Message decryption failed: {e}")
+            raise
     
     async def add_human_participant(self, user_id: str, name: str, public_key: str = None) -> NodeParticipant:
         """
@@ -459,12 +473,13 @@ class HumanAINode:
                 logger.error(f"Failed to decrypt message: {e}")
                 return
         
+        # Check if message is from an agent to prevent agent-to-agent loops
+        if message.sender in self.agents:
+            logger.debug(f"Skipping agent processing for message from agent {message.sender}")
+            return
+        
         # Check if any agents should respond
         for agent_id, agent in self.agents.items():
-            # Skip if message is from this agent
-            if message.sender == agent_id:
-                continue
-            
             # Generate response
             try:
                 response_content = await agent.generate_response(

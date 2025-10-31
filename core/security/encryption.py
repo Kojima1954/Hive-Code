@@ -1,6 +1,7 @@
 """Hybrid encryption module using RSA and AES-GCM."""
 
 import base64
+import logging
 import os
 from typing import Tuple
 
@@ -8,6 +9,8 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+logger = logging.getLogger(__name__)
 
 # Constants
 RSA_KEY_SIZE = 4096
@@ -68,38 +71,49 @@ class HybridEncryption:
 
         Returns:
             Tuple of (encrypted_data, encrypted_key, nonce)
+            
+        Raises:
+            ValueError: If data is empty or invalid
+            Exception: If encryption fails
         """
-        if len(data) > RSA_ENCRYPTION_THRESHOLD:  # Use hybrid encryption for large messages
-            # Generate random AES key
-            aes_key = AESGCM.generate_key(bit_length=AES_KEY_SIZE)
-            aesgcm = AESGCM(aes_key)
-            nonce = os.urandom(AES_NONCE_SIZE)
+        if not data:
+            raise ValueError("Cannot encrypt empty data")
+        
+        try:
+            if len(data) > RSA_ENCRYPTION_THRESHOLD:  # Use hybrid encryption for large messages
+                # Generate random AES key
+                aes_key = AESGCM.generate_key(bit_length=AES_KEY_SIZE)
+                aesgcm = AESGCM(aes_key)
+                nonce = os.urandom(AES_NONCE_SIZE)
 
-            # Encrypt data with AES-GCM
-            encrypted_data = aesgcm.encrypt(nonce, data, None)
+                # Encrypt data with AES-GCM
+                encrypted_data = aesgcm.encrypt(nonce, data, None)
 
-            # Encrypt AES key with RSA
-            encrypted_key = recipient_public_key.encrypt(
-                aes_key,
-                padding.OAEP(
-                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                    algorithm=hashes.SHA256(),
-                    label=None
+                # Encrypt AES key with RSA
+                encrypted_key = recipient_public_key.encrypt(
+                    aes_key,
+                    padding.OAEP(
+                        mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                        algorithm=hashes.SHA256(),
+                        label=None
+                    )
                 )
-            )
 
-            return encrypted_data, encrypted_key, nonce
-        else:
-            # Use RSA directly for small messages
-            encrypted_data = recipient_public_key.encrypt(
-                data,
-                padding.OAEP(
-                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                    algorithm=hashes.SHA256(),
-                    label=None
+                return encrypted_data, encrypted_key, nonce
+            else:
+                # Use RSA directly for small messages
+                encrypted_data = recipient_public_key.encrypt(
+                    data,
+                    padding.OAEP(
+                        mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                        algorithm=hashes.SHA256(),
+                        label=None
+                    )
                 )
-            )
-            return encrypted_data, b'', b''
+                return encrypted_data, b'', b''
+        except Exception as e:
+            logger.error(f"Encryption failed: {e}")
+            raise
 
     def decrypt(self, encrypted_data: bytes, encrypted_key: bytes, nonce: bytes) -> bytes:
         """
@@ -112,30 +126,41 @@ class HybridEncryption:
 
         Returns:
             bytes: Decrypted data
+            
+        Raises:
+            ValueError: If encrypted data is empty or invalid
+            Exception: If decryption fails
         """
-        if encrypted_key:  # Hybrid encryption was used
-            # Decrypt AES key with RSA
-            aes_key = self.private_key.decrypt(
-                encrypted_key,
-                padding.OAEP(
-                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                    algorithm=hashes.SHA256(),
-                    label=None
+        if not encrypted_data:
+            raise ValueError("Cannot decrypt empty data")
+        
+        try:
+            if encrypted_key:  # Hybrid encryption was used
+                # Decrypt AES key with RSA
+                aes_key = self.private_key.decrypt(
+                    encrypted_key,
+                    padding.OAEP(
+                        mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                        algorithm=hashes.SHA256(),
+                        label=None
+                    )
                 )
-            )
 
-            # Decrypt data with AES-GCM
-            aesgcm = AESGCM(aes_key)
-            data = aesgcm.decrypt(nonce, encrypted_data, None)
-            return data
-        else:
-            # RSA direct decryption
-            data = self.private_key.decrypt(
-                encrypted_data,
-                padding.OAEP(
-                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                    algorithm=hashes.SHA256(),
-                    label=None
+                # Decrypt data with AES-GCM
+                aesgcm = AESGCM(aes_key)
+                data = aesgcm.decrypt(nonce, encrypted_data, None)
+                return data
+            else:
+                # RSA direct decryption
+                data = self.private_key.decrypt(
+                    encrypted_data,
+                    padding.OAEP(
+                        mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                        algorithm=hashes.SHA256(),
+                        label=None
+                    )
                 )
-            )
-            return data
+                return data
+        except Exception as e:
+            logger.error(f"Decryption failed: {e}")
+            raise

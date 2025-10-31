@@ -409,14 +409,23 @@ class DiffMemManager:
     
     async def stop_background_tasks(self):
         """Stop background tasks."""
-        if self._consolidation_task:
-            self._consolidation_task.cancel()
-            try:
-                await self._consolidation_task
-            except asyncio.CancelledError:
-                pass
+        tasks_to_cancel = []
         
-        logger.info("Stopped background tasks")
+        if self._consolidation_task:
+            tasks_to_cancel.append(self._consolidation_task)
+        
+        # Cancel all tasks
+        for task in tasks_to_cancel:
+            task.cancel()
+        
+        # Wait for tasks to complete cancellation
+        if tasks_to_cancel:
+            await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
+        
+        # Shutdown executor
+        self.executor.shutdown(wait=True)
+        
+        logger.info("Stopped background tasks and executor")
     
     def get_stats(self) -> Dict[str, Any]:
         """
