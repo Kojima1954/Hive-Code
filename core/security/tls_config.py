@@ -77,8 +77,10 @@ class TLSManager:
             .issuer_name(issuer)
             .public_key(private_key.public_key())
             .serial_number(x509.random_serial_number())
-            .not_valid_before(datetime.now(datetime.UTC if hasattr(datetime, 'UTC') else timezone.utc).replace(tzinfo=None))
-            .not_valid_after(datetime.now(datetime.UTC if hasattr(datetime, 'UTC') else timezone.utc).replace(tzinfo=None) + timedelta(days=validity_days))
+            .not_valid_before(datetime.now(timezone.utc).replace(tzinfo=None))
+            .not_valid_after(
+                (datetime.now(timezone.utc) + timedelta(days=validity_days)).replace(tzinfo=None)
+            )
             .add_extension(
                 x509.SubjectAlternativeName([
                     x509.DNSName(domain),
