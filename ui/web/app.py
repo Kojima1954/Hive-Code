@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
@@ -22,6 +23,7 @@ from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from core.node.node_manager import HumanAINode, Message
 from core.memory.diffmem_integration import DiffMemManager
 from core.security.rate_limiting import RateLimitMiddleware
+from core.security.input_validation import validate_username, validate_limit, ValidationError
 from core.monitoring.health_check import HealthChecker
 from core.monitoring.metrics import registry, websocket_connections, increment_counter
 
@@ -269,7 +271,10 @@ def create_app(
         app.state.health_checker = HealthChecker(app.state.redis_client)
         
         # Add rate limiting middleware
-        app.add_middleware(RateLimitMiddleware, redis_client=app.state.redis_client)
+        # fail_open=True allows requests during Redis outages (prioritizes availability)
+        # fail_open=False rejects requests during Redis outages (prioritizes security)
+        fail_open = os.getenv("RATE_LIMIT_FAIL_OPEN", "true").lower() == "true"
+        app.add_middleware(RateLimitMiddleware, redis_client=app.state.redis_client, fail_open=fail_open)
         
         logger.info("Swarm Network application started successfully")
     
@@ -298,7 +303,8 @@ def create_app(
         payload = {
             "user_id": user_id,
             "username": username,
-            "exp": datetime.now(timezone.utc) + timedelta(hours=24)
+            "exp": datetime.now(timezone.utc) + timedelta(hours=24),
+            "iat": datetime.now(timezone.utc)
         }
         return jwt.encode(payload, app.state.jwt_secret, algorithm="HS256")
     
@@ -361,13 +367,31 @@ def create_app(
         - Implement rate limiting on login attempts
         - Add CAPTCHA for brute force protection
         - Log authentication attempts
+        
+        Raises:
+            HTTPException: If username validation fails
         """
+        try:
+            # Validate username
+            username = validate_username(username)
+        except ValidationError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e)
+            )
+        
         # In production, verify against a real user database
         user_id = f"user_{username}"
         token = create_token(user_id, username)
         
         # Add user to node
-        await app.state.node.add_human_participant(user_id, username)
+        try:
+            await app.state.node.add_human_participant(user_id, username)
+        except ValidationError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e)
+            )
         
         logger.info(f"User logged in: {username} (DEMO MODE)")
         
@@ -382,7 +406,12 @@ def create_app(
         message_req: MessageRequest,
         request: Request
     ):
-        """Send a message."""
+        """
+        Send a message.
+        
+        Raises:
+            HTTPException: If validation fails or message processing fails
+        """
         # Extract user from token (simplified)
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
@@ -395,12 +424,18 @@ def create_app(
         else:
             user_id = "anonymous"
         
-        # Process message
-        message = await app.state.node.process_message(
-            sender_id=user_id,
-            content=message_req.content,
-            encrypt=message_req.encrypt
-        )
+        # Process message with validation
+        try:
+            message = await app.state.node.process_message(
+                sender_id=user_id,
+                content=message_req.content,
+                encrypt=message_req.encrypt
+            )
+        except ValidationError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e)
+            )
         
         return MessageResponse(
             sender=message.sender,
@@ -411,8 +446,21 @@ def create_app(
     
     @app.get("/api/messages/history")
     async def get_history(limit: int = 50):
-        """Get message history."""
-        messages = await app.state.node.get_conversation_history(limit)
+        """
+        Get message history.
+        
+        Raises:
+            HTTPException: If validation fails
+        """
+        try:
+            limit = validate_limit(limit, max_limit=100)
+            messages = await app.state.node.get_conversation_history(limit)
+        except ValidationError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e)
+            )
+        
         return [
             MessageResponse(
                 sender=msg.sender,
@@ -436,24 +484,57 @@ def create_app(
     
     @app.websocket("/ws/{user_id}")
     async def websocket_endpoint(websocket: WebSocket, user_id: str):
-        """WebSocket endpoint for real-time chat."""
+        """
+        WebSocket endpoint for real-time chat.
+        
+        Raises:
+            ValidationError: If user_id is invalid
+        """
+        # Validate user_id
+        try:
+            user_id = validate_username(user_id)
+        except ValidationError as e:
+            logger.warning(f"Invalid user_id in WebSocket connection: {e}")
+            await websocket.close(code=1008, reason="Invalid user ID")
+            return
+        
         await app.state.connection_manager.connect(user_id, websocket)
         
         # Add user to node
-        await app.state.node.add_human_participant(user_id, user_id)
+        try:
+            await app.state.node.add_human_participant(user_id, user_id)
+        except ValidationError as e:
+            logger.warning(f"Failed to add participant: {e}")
+            await websocket.close(code=1008, reason="Failed to add participant")
+            return
         
         try:
             while True:
                 # Receive message
                 data = await websocket.receive_text()
-                message_data = json.loads(data)
                 
-                # Process message
-                message = await app.state.node.process_message(
-                    sender_id=user_id,
-                    content=message_data.get("content", ""),
-                    encrypt=message_data.get("encrypt", False)
-                )
+                try:
+                    message_data = json.loads(data)
+                except json.JSONDecodeError:
+                    logger.warning(f"Invalid JSON from {user_id}")
+                    continue
+                
+                # Process message with validation
+                try:
+                    message = await app.state.node.process_message(
+                        sender_id=user_id,
+                        content=message_data.get("content", ""),
+                        encrypt=message_data.get("encrypt", False)
+                    )
+                except ValidationError as e:
+                    logger.warning(f"Message validation failed for {user_id}: {e}")
+                    # Send error back to user
+                    error_response = json.dumps({
+                        "error": str(e),
+                        "timestamp": time.time()
+                    })
+                    await websocket.send_text(error_response)
+                    continue
                 
                 # Broadcast to others
                 response = json.dumps({

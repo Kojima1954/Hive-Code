@@ -9,6 +9,8 @@ from fastapi import Request, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 import redis.asyncio as redis
 
+from core.security.input_validation import sanitize_redis_key, ValidationError
+
 logger = logging.getLogger(__name__)
 
 # Constants
@@ -24,14 +26,16 @@ DEFAULT_METRICS_RATE_LIMIT = (10, 60)  # 10 requests per 60 seconds
 class RateLimiter:
     """Redis-based rate limiter using sliding window algorithm."""
 
-    def __init__(self, redis_client: redis.Redis):
+    def __init__(self, redis_client: redis.Redis, fail_open: bool = False):
         """
         Initialize rate limiter.
 
         Args:
             redis_client: Async Redis client
+            fail_open: If True, allows requests when Redis is unavailable (default: False for security)
         """
         self.redis = redis_client
+        self.fail_open = fail_open
 
     async def check_rate_limit(
         self,
@@ -52,12 +56,21 @@ class RateLimiter:
             
         Raises:
             ValueError: If limit or window are not positive integers
+            ValidationError: If key is invalid
         """
         # Validate inputs
         if limit <= 0:
             raise ValueError(f"Rate limit must be positive, got {limit}")
         if window <= 0:
             raise ValueError(f"Time window must be positive, got {window}")
+        
+        # Sanitize Redis key to prevent injection
+        try:
+            key = sanitize_redis_key(key)
+        except ValidationError as e:
+            logger.error(f"Invalid Redis key: {e}")
+            # Fail closed - reject invalid keys
+            return False, 0
         
         now = time.time()
         window_start = now - window
@@ -79,24 +92,32 @@ class RateLimiter:
 
         except Exception as e:
             logger.error(f"Rate limit check failed: {e}")
-            # Fail open - allow request if Redis is down
-            return True, limit
+            
+            if self.fail_open:
+                # Fail open - allow request if Redis is down (less secure but maintains availability)
+                logger.warning("Rate limiting failing open due to Redis error")
+                return True, limit
+            else:
+                # Fail closed - reject request if Redis is down (more secure but impacts availability)
+                logger.warning("Rate limiting failing closed due to Redis error")
+                return False, 0
 
 
 class DDoSProtection:
     """DDoS protection with IP banning and advanced rate limiting."""
 
-    def __init__(self, redis_client: redis.Redis, ban_duration: int = DEFAULT_BAN_DURATION):
+    def __init__(self, redis_client: redis.Redis, ban_duration: int = DEFAULT_BAN_DURATION, fail_open: bool = False):
         """
         Initialize DDoS protection.
 
         Args:
             redis_client: Async Redis client
             ban_duration: Duration to ban IPs in seconds (default: 1 hour)
+            fail_open: If True, allows requests when Redis is unavailable (default: False)
         """
         self.redis = redis_client
         self.ban_duration = ban_duration
-        self.rate_limiter = RateLimiter(redis_client)
+        self.rate_limiter = RateLimiter(redis_client, fail_open=fail_open)
 
     async def is_banned(self, ip: str) -> bool:
         """
@@ -177,7 +198,7 @@ class DDoSProtection:
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """FastAPI middleware for rate limiting."""
 
-    def __init__(self, app, redis_client: redis.Redis, rules: Optional[dict] = None):
+    def __init__(self, app, redis_client: redis.Redis, rules: Optional[dict] = None, fail_open: bool = False):
         """
         Initialize rate limit middleware.
 
@@ -185,9 +206,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             app: FastAPI application
             redis_client: Async Redis client
             rules: Rate limit rules per endpoint pattern
+            fail_open: If True, allows requests when Redis is unavailable (default: False)
         """
         super().__init__(app)
-        self.ddos_protection = DDoSProtection(redis_client)
+        self.ddos_protection = DDoSProtection(redis_client, fail_open=fail_open)
         self.rules = rules or {
             "/api/": DEFAULT_API_RATE_LIMIT,      # 100 requests per minute
             "/ws/": DEFAULT_WS_RATE_LIMIT,         # 30 connections per minute

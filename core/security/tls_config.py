@@ -4,13 +4,13 @@ import os
 import logging
 from pathlib import Path
 from typing import Optional, Tuple
+from datetime import datetime, timezone, timedelta
 
 from cryptography import x509
 from cryptography.x509.oid import NameOID, ExtensionOID
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -55,10 +55,10 @@ class TLSManager:
             logger.info(f"Using existing certificate: {cert_path}")
             return key_path, cert_path
 
-        # Generate private key
+        # Generate private key (4096 bits for production security)
         private_key = rsa.generate_private_key(
             public_exponent=65537,
-            key_size=2048,
+            key_size=4096,
             backend=default_backend()
         )
 
@@ -77,8 +77,10 @@ class TLSManager:
             .issuer_name(issuer)
             .public_key(private_key.public_key())
             .serial_number(x509.random_serial_number())
-            .not_valid_before(datetime.utcnow())
-            .not_valid_after(datetime.utcnow() + timedelta(days=validity_days))
+            .not_valid_before(datetime.now(timezone.utc).replace(tzinfo=None))
+            .not_valid_after(
+                (datetime.now(timezone.utc) + timedelta(days=validity_days)).replace(tzinfo=None)
+            )
             .add_extension(
                 x509.SubjectAlternativeName([
                     x509.DNSName(domain),
@@ -150,7 +152,7 @@ class TLSManager:
 
         try:
             # Check if certificate is expired
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
             if now < cert.not_valid_before or now > cert.not_valid_after:
                 logger.warning("Certificate is expired or not yet valid")
                 return False

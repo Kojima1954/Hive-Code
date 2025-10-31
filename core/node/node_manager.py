@@ -15,6 +15,10 @@ from cryptography.fernet import Fernet
 import ollama
 
 from core.memory.diffmem_integration import DiffMemManager
+from core.security.input_validation import (
+    validate_user_id, validate_username, validate_message_content,
+    validate_tags, validate_importance, validate_limit, ValidationError
+)
 from core.monitoring.metrics import (
     message_counter, message_processing_time,
     active_participants, increment_counter, track_time
@@ -258,9 +262,16 @@ class HumanAINode:
             
         Returns:
             Encrypted content (base64)
+            
+        Raises:
+            Exception: If encryption fails
         """
-        encrypted = self.cipher.encrypt(content.encode('utf-8'))
-        return encrypted.decode('utf-8')
+        try:
+            encrypted = self.cipher.encrypt(content.encode('utf-8'))
+            return encrypted.decode('utf-8')
+        except Exception as e:
+            logger.error(f"Message encryption failed: {e}")
+            raise
     
     def decrypt_message(self, encrypted_content: str) -> str:
         """
@@ -271,9 +282,16 @@ class HumanAINode:
             
         Returns:
             Decrypted content
+            
+        Raises:
+            Exception: If decryption fails
         """
-        decrypted = self.cipher.decrypt(encrypted_content.encode('utf-8'))
-        return decrypted.decode('utf-8')
+        try:
+            decrypted = self.cipher.decrypt(encrypted_content.encode('utf-8'))
+            return decrypted.decode('utf-8')
+        except Exception as e:
+            logger.error(f"Message decryption failed: {e}")
+            raise
     
     async def add_human_participant(self, user_id: str, name: str, public_key: str = None) -> NodeParticipant:
         """
@@ -286,7 +304,14 @@ class HumanAINode:
             
         Returns:
             Created participant
+            
+        Raises:
+            ValidationError: If input validation fails
         """
+        # Validate inputs
+        user_id = validate_user_id(user_id)
+        name = validate_username(name)
+        
         participant = NodeParticipant(
             id=user_id,
             name=name,
@@ -325,7 +350,14 @@ class HumanAINode:
             
         Returns:
             Created agent
+            
+        Raises:
+            ValidationError: If input validation fails
         """
+        # Validate inputs
+        agent_id = validate_user_id(agent_id)
+        name = validate_username(name)
+        
         agent = OllamaAgent(
             agent_id=agent_id,
             name=name,
@@ -375,7 +407,14 @@ class HumanAINode:
             
         Returns:
             Processed message
+            
+        Raises:
+            ValidationError: If input validation fails
         """
+        # Validate inputs
+        sender_id = validate_user_id(sender_id)
+        content = validate_message_content(content)
+        
         # Create message
         message_content = content
         if encrypt:
@@ -434,12 +473,13 @@ class HumanAINode:
                 logger.error(f"Failed to decrypt message: {e}")
                 return
         
+        # Check if message is from an agent to prevent agent-to-agent loops
+        if message.sender in self.agents:
+            logger.debug(f"Skipping agent processing for message from agent {message.sender}")
+            return
+        
         # Check if any agents should respond
         for agent_id, agent in self.agents.items():
-            # Skip if message is from this agent
-            if message.sender == agent_id:
-                continue
-            
             # Generate response
             try:
                 response_content = await agent.generate_response(
@@ -498,7 +538,13 @@ class HumanAINode:
             
         Returns:
             List of recent messages
+            
+        Raises:
+            ValidationError: If limit is invalid
         """
+        # Validate limit
+        limit = validate_limit(limit, max_limit=100)
+        
         # Convert deque to list and get last N messages
         messages = list(self.message_queue)
         return messages[-limit:] if len(messages) > limit else messages
