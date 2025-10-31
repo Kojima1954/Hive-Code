@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from typing import Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 import psutil
 import redis.asyncio as redis
@@ -22,7 +22,7 @@ class HealthChecker:
             redis_client: Optional Redis client for connectivity checks
         """
         self.redis_client = redis_client
-        self.start_time = datetime.utcnow()
+        self.start_time = datetime.now(timezone.utc)
 
     async def check_redis(self) -> Dict[str, Any]:
         """
@@ -89,7 +89,7 @@ class HealthChecker:
         Returns:
             dict: Uptime information
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         uptime = now - self.start_time
         
         return {
@@ -108,7 +108,7 @@ class HealthChecker:
         """
         health = {
             "status": "healthy",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "uptime": self.check_uptime(),
             "system": self.check_system_metrics(),
         }

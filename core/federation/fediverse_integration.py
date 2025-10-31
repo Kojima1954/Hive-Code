@@ -5,7 +5,7 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 
 import httpx
@@ -132,7 +132,7 @@ class FediverseConnector:
             ActivityPub message
         """
         actor_url = f"https://{self.domain}/actors/{self.actor_id}"
-        activity_id = f"{actor_url}/activities/{datetime.utcnow().timestamp()}"
+        activity_id = f"{actor_url}/activities/{datetime.now(timezone.utc).timestamp()}"
         
         message = ActivityPubMessage(
             id=activity_id,
@@ -141,10 +141,10 @@ class FediverseConnector:
             object={
                 "type": "Note",
                 "content": content,
-                "published": datetime.utcnow().isoformat(),
+                "published": datetime.now(timezone.utc).isoformat(),
                 "to": to or ["https://www.w3.org/ns/activitystreams#Public"]
             },
-            published=datetime.utcnow().isoformat()
+            published=datetime.now(timezone.utc).isoformat()
         )
         
         # Sign the message (exclude signature field)
@@ -250,7 +250,7 @@ class FediverseConnector:
         # Create record
         record = BlockchainRecord(
             message_id=message.id,
-            timestamp=datetime.utcnow().timestamp(),
+            timestamp=datetime.now(timezone.utc).timestamp(),
             previous_hash=previous_hash,
             content_hash=content_hash,
             signature=message.signature or ""

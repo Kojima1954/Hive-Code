@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import threading
 import time
 import zlib
 from dataclasses import dataclass, field, asdict
@@ -18,6 +19,11 @@ from git import Repo
 from sklearn.cluster import DBSCAN
 from sklearn.metrics.pairwise import cosine_similarity
 
+from core.security.input_validation import (
+    validate_message_content, validate_tags, validate_importance,
+    validate_limit, ValidationError
+)
+
 logger = logging.getLogger(__name__)
 
 # Try to import sentence-transformers, fall back to hash-based embeddings
@@ -27,6 +33,16 @@ try:
 except ImportError:
     EMBEDDINGS_AVAILABLE = False
     logger.warning("sentence-transformers not available, using hash-based embeddings")
+
+# Constants
+DEFAULT_EMBEDDING_MODEL = 'all-MiniLM-L6-v2'
+DEFAULT_MAX_SIZE_MB = 1000
+DEFAULT_CONSOLIDATION_INTERVAL = 3600  # 1 hour in seconds
+COMPRESSION_THRESHOLD_BYTES = 1024  # Compress content larger than 1KB
+MEMORY_IMPORTANCE_THRESHOLD = 0.1  # Minimum importance to retain
+MEMORY_DECAY_HALF_LIFE_DAYS = 30  # Importance decay half-life
+DBSCAN_DEFAULT_EPS = 0.3
+DBSCAN_DEFAULT_MIN_SAMPLES = 2
 
 
 @dataclass
@@ -62,8 +78,8 @@ class DiffMemManager:
         self,
         storage_path: str = "memory",
         compression_enabled: bool = True,
-        max_size_mb: int = 1000,
-        consolidation_interval: int = 3600
+        max_size_mb: int = DEFAULT_MAX_SIZE_MB,
+        consolidation_interval: int = DEFAULT_CONSOLIDATION_INTERVAL
     ):
         """
         Initialize DiffMem manager.
@@ -89,12 +105,15 @@ class DiffMemManager:
         self.memories: List[MemoryEntry] = []
         self.executor = ThreadPoolExecutor(max_workers=2)
         
+        # Thread lock for Git operations
+        self._git_lock = threading.Lock()
+        
         # Initialize embedding model if available
         self.embedding_model = None
         if EMBEDDINGS_AVAILABLE:
             try:
-                self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-                logger.info("Loaded sentence-transformers embedding model")
+                self.embedding_model = SentenceTransformer(DEFAULT_EMBEDDING_MODEL)
+                logger.info("Loaded sentence-transformers embedding model: %s", DEFAULT_EMBEDDING_MODEL)
             except Exception as e:
                 logger.warning(f"Failed to load embedding model: {e}")
         
@@ -177,7 +196,16 @@ class DiffMemManager:
             
         Returns:
             Created memory entry
+            
+        Raises:
+            ValidationError: If input validation fails
         """
+        # Validate inputs
+        content = validate_message_content(content)
+        importance = validate_importance(importance)
+        if tags:
+            tags = validate_tags(tags)
+        
         # Generate embedding
         loop = asyncio.get_event_loop()
         embedding = await loop.run_in_executor(
@@ -189,7 +217,7 @@ class DiffMemManager:
         # Create memory entry
         memory = MemoryEntry(
             content=content,
-            importance=min(max(importance, 0.0), 10.0),
+            importance=importance,
             embedding=embedding,
             tags=tags or [],
             source=source
@@ -218,32 +246,34 @@ class DiffMemManager:
         )
     
     def _save_to_git_sync(self, memory: MemoryEntry):
-        """Synchronous Git save operation."""
-        try:
-            # Create filename from timestamp
-            filename = f"memory_{int(memory.timestamp * 1000)}.json"
-            filepath = self.repo_path / filename
-            
-            # Prepare data
-            data = memory.to_dict()
-            if self.compression_enabled and len(memory.content) > 1024:
-                # Compress large content
-                compressed = self._compress_content(memory.content)
-                data['content'] = compressed.hex()
-                data['compressed'] = True
-            
-            # Write to file
-            with open(filepath, 'w') as f:
-                json.dump(data, f, indent=2)
-            
-            # Git commit
-            self.repo.index.add([str(filepath)])
-            self.repo.index.commit(
-                f"Add memory: {memory.source} at {datetime.fromtimestamp(memory.timestamp)}"
-            )
-            
-        except Exception as e:
-            logger.error(f"Failed to save memory to Git: {e}")
+        """Synchronous Git save operation with thread safety."""
+        # Acquire lock to prevent concurrent Git operations
+        with self._git_lock:
+            try:
+                # Create filename from timestamp
+                filename = f"memory_{int(memory.timestamp * 1000)}.json"
+                filepath = self.repo_path / filename
+                
+                # Prepare data
+                data = memory.to_dict()
+                if self.compression_enabled and len(memory.content) > 1024:
+                    # Compress large content
+                    compressed = self._compress_content(memory.content)
+                    data['content'] = compressed.hex()
+                    data['compressed'] = True
+                
+                # Write to file
+                with open(filepath, 'w') as f:
+                    json.dump(data, f, indent=2)
+                
+                # Git commit
+                self.repo.index.add([str(filepath)])
+                self.repo.index.commit(
+                    f"Add memory: {memory.source} at {datetime.fromtimestamp(memory.timestamp)}"
+                )
+                
+            except Exception as e:
+                logger.error(f"Failed to save memory to Git: {e}")
     
     async def retrieve_memories(
         self,
@@ -261,7 +291,15 @@ class DiffMemManager:
             
         Returns:
             List of relevant memory entries
+            
+        Raises:
+            ValidationError: If inputs are invalid
         """
+        # Validate inputs
+        query = validate_message_content(query)
+        top_k = validate_limit(top_k, max_limit=100)
+        min_importance = validate_importance(min_importance)
+        
         if not self.memories:
             return []
         
@@ -300,7 +338,7 @@ class DiffMemManager:
         
         return top_memories
     
-    async def cluster_memories(self, eps: float = 0.3, min_samples: int = 2) -> List[List[MemoryEntry]]:
+    async def cluster_memories(self, eps: float = DBSCAN_DEFAULT_EPS, min_samples: int = DBSCAN_DEFAULT_MIN_SAMPLES) -> List[List[MemoryEntry]]:
         """
         Cluster similar memories using DBSCAN.
         
@@ -344,11 +382,11 @@ class DiffMemManager:
         current_time = time.time()
         for memory in self.memories:
             age_days = (current_time - memory.timestamp) / 86400
-            decay_factor = np.exp(-age_days / 30)  # 30-day half-life
+            decay_factor = np.exp(-age_days / MEMORY_DECAY_HALF_LIFE_DAYS)  # Configurable half-life
             memory.importance *= decay_factor
         
         # Remove low-importance memories
-        self.memories = [m for m in self.memories if m.importance > 0.1]
+        self.memories = [m for m in self.memories if m.importance > MEMORY_IMPORTANCE_THRESHOLD]
         
         # Cluster and consolidate similar memories
         clusters = await self.cluster_memories()
@@ -371,14 +409,23 @@ class DiffMemManager:
     
     async def stop_background_tasks(self):
         """Stop background tasks."""
-        if self._consolidation_task:
-            self._consolidation_task.cancel()
-            try:
-                await self._consolidation_task
-            except asyncio.CancelledError:
-                pass
+        tasks_to_cancel = []
         
-        logger.info("Stopped background tasks")
+        if self._consolidation_task:
+            tasks_to_cancel.append(self._consolidation_task)
+        
+        # Cancel all tasks
+        for task in tasks_to_cancel:
+            task.cancel()
+        
+        # Wait for tasks to complete cancellation
+        if tasks_to_cancel:
+            await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
+        
+        # Shutdown executor
+        self.executor.shutdown(wait=True)
+        
+        logger.info("Stopped background tasks and executor")
     
     def get_stats(self) -> Dict[str, Any]:
         """
