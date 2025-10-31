@@ -19,6 +19,11 @@ from git import Repo
 from sklearn.cluster import DBSCAN
 from sklearn.metrics.pairwise import cosine_similarity
 
+from core.security.input_validation import (
+    validate_message_content, validate_tags, validate_importance,
+    validate_limit, ValidationError
+)
+
 logger = logging.getLogger(__name__)
 
 # Try to import sentence-transformers, fall back to hash-based embeddings
@@ -191,7 +196,16 @@ class DiffMemManager:
             
         Returns:
             Created memory entry
+            
+        Raises:
+            ValidationError: If input validation fails
         """
+        # Validate inputs
+        content = validate_message_content(content)
+        importance = validate_importance(importance)
+        if tags:
+            tags = validate_tags(tags)
+        
         # Generate embedding
         loop = asyncio.get_event_loop()
         embedding = await loop.run_in_executor(
@@ -203,7 +217,7 @@ class DiffMemManager:
         # Create memory entry
         memory = MemoryEntry(
             content=content,
-            importance=min(max(importance, 0.0), 10.0),
+            importance=importance,
             embedding=embedding,
             tags=tags or [],
             source=source
@@ -277,7 +291,15 @@ class DiffMemManager:
             
         Returns:
             List of relevant memory entries
+            
+        Raises:
+            ValidationError: If inputs are invalid
         """
+        # Validate inputs
+        query = validate_message_content(query)
+        top_k = validate_limit(top_k, max_limit=100)
+        min_importance = validate_importance(min_importance)
+        
         if not self.memories:
             return []
         

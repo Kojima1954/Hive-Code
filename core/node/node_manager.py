@@ -15,6 +15,10 @@ from cryptography.fernet import Fernet
 import ollama
 
 from core.memory.diffmem_integration import DiffMemManager
+from core.security.input_validation import (
+    validate_user_id, validate_username, validate_message_content,
+    validate_tags, validate_importance, validate_limit, ValidationError
+)
 from core.monitoring.metrics import (
     message_counter, message_processing_time,
     active_participants, increment_counter, track_time
@@ -286,7 +290,14 @@ class HumanAINode:
             
         Returns:
             Created participant
+            
+        Raises:
+            ValidationError: If input validation fails
         """
+        # Validate inputs
+        user_id = validate_user_id(user_id)
+        name = validate_username(name)
+        
         participant = NodeParticipant(
             id=user_id,
             name=name,
@@ -325,7 +336,14 @@ class HumanAINode:
             
         Returns:
             Created agent
+            
+        Raises:
+            ValidationError: If input validation fails
         """
+        # Validate inputs
+        agent_id = validate_user_id(agent_id)
+        name = validate_username(name)
+        
         agent = OllamaAgent(
             agent_id=agent_id,
             name=name,
@@ -375,7 +393,14 @@ class HumanAINode:
             
         Returns:
             Processed message
+            
+        Raises:
+            ValidationError: If input validation fails
         """
+        # Validate inputs
+        sender_id = validate_user_id(sender_id)
+        content = validate_message_content(content)
+        
         # Create message
         message_content = content
         if encrypt:
@@ -498,7 +523,13 @@ class HumanAINode:
             
         Returns:
             List of recent messages
+            
+        Raises:
+            ValidationError: If limit is invalid
         """
+        # Validate limit
+        limit = validate_limit(limit, max_limit=100)
+        
         # Convert deque to list and get last N messages
         messages = list(self.message_queue)
         return messages[-limit:] if len(messages) > limit else messages

@@ -9,6 +9,8 @@ from fastapi import Request, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 import redis.asyncio as redis
 
+from core.security.input_validation import sanitize_redis_key, ValidationError
+
 logger = logging.getLogger(__name__)
 
 # Constants
@@ -52,12 +54,21 @@ class RateLimiter:
             
         Raises:
             ValueError: If limit or window are not positive integers
+            ValidationError: If key is invalid
         """
         # Validate inputs
         if limit <= 0:
             raise ValueError(f"Rate limit must be positive, got {limit}")
         if window <= 0:
             raise ValueError(f"Time window must be positive, got {window}")
+        
+        # Sanitize Redis key to prevent injection
+        try:
+            key = sanitize_redis_key(key)
+        except ValidationError as e:
+            logger.error(f"Invalid Redis key: {e}")
+            # Fail closed - reject invalid keys
+            return False, 0
         
         now = time.time()
         window_start = now - window
