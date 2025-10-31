@@ -439,6 +439,8 @@ class DiffMemManager:
                 "total_memories": 0,
                 "total_size_bytes": 0,
                 "average_importance": 0,
+                "compression_enabled": self.compression_enabled,
+                "embeddings_available": EMBEDDINGS_AVAILABLE,
             }
         
         total_size = sum(len(m.content) for m in self.memories)

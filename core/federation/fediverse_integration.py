@@ -147,8 +147,10 @@ class FediverseConnector:
             published=datetime.now(timezone.utc).isoformat()
         )
         
-        # Sign the message
-        message.signature = self._sign_message(message.to_dict())
+        # Sign the message (exclude signature field)
+        message_dict = message.to_dict()
+        message_dict.pop('signature', None)  # Remove signature field before signing
+        message.signature = self._sign_message(message_dict)
         
         return message
     

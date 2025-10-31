@@ -175,6 +175,6 @@ def test_blockchain_tampering_detection():
     if len(connector.blockchain) > 1:
         connector.blockchain[1].content_hash = "tampered"
     
-    # Verification should still pass as we check hash chain, not content hash
-    # In production, you'd also verify content hashes
-    assert connector.verify_blockchain() is True
+    # Verification should fail because tampering the content_hash breaks the hash chain
+    # The next block's previous_hash won't match the tampered block's computed hash
+    assert connector.verify_blockchain() is False
