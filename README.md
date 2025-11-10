@@ -26,69 +26,22 @@ A production-ready distributed AI conversation system that combines human partic
 
 ## 🚀 Quick Start
 
-### Windows
+### Recommended: Docker Compose
 
-1. **Prerequisites**
-   ```powershell
-   # Requires Python 3.11+, Docker Desktop, and Ollama
-   choco install python docker-desktop
-   ```
-
-2. **Setup Development Environment**
-   ```powershell
-   .\scripts\setup-dev.ps1
-   ```
-
-3. **Start Infrastructure**
-   ```powershell
-   docker run -d -p 6379:6379 redis
-   # Install and start Ollama from https://ollama.ai
-   ollama pull llama2
-   ```
-
-4. **Run Application**
-   ```powershell
-   python main.py
-   ```
-
-### Linux/macOS
-
-1. **Prerequisites**
-   ```bash
-   # Requires Python 3.11+, Docker, and Ollama
-   sudo apt update && sudo apt install python3.11 python3-pip docker.io
-   ```
-
-2. **Setup Development Environment**
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   cp .env.example .env
-   ```
-
-3. **Start Infrastructure**
-   ```bash
-   docker run -d -p 6379:6379 redis
-   # Install Ollama from https://ollama.ai
-   ollama pull llama2
-   ```
-
-4. **Run Application**
-   ```bash
-   python main.py
-   ```
-
-### Docker Compose (Recommended)
+The fastest way to get started:
 
 ```bash
-# Start all services
+# Clone the repository (if you haven't already)
+git clone https://github.com/Kojima1954/Hive-Code.git
+cd Hive-Code
+
+# Start all services with the deployment script
 ./scripts/deploy-production.sh
 
-# Or manually
+# Or start manually
 docker-compose up -d
 
-# Pull Ollama model
+# Pull the Ollama model
 docker-compose exec ollama ollama pull llama2
 ```
 
@@ -97,6 +50,28 @@ Access the application:
 - **API Docs**: http://localhost:8000/docs
 - **Prometheus**: http://localhost:9090
 - **Grafana**: http://localhost:3000 (admin/admin)
+
+### Alternative: Manual Installation
+
+For development or custom setups, see detailed OS-specific instructions in [USAGE.md](USAGE.md#1-installation).
+
+**Quick manual setup (Linux/macOS):**
+```bash
+# Install dependencies
+pip install -r requirements.txt
+cp .env.example .env
+
+# Start Redis
+docker run -d -p 6379:6379 redis:7-alpine
+
+# Install and configure Ollama from https://ollama.ai
+ollama pull llama2
+
+# Run the application
+python main.py
+```
+
+**For Windows users:** See [USAGE.md](USAGE.md#1-installation) for PowerShell-specific commands.
 
 ## 📁 Project Structure
 
