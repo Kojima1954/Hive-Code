@@ -19,12 +19,17 @@ if ! command -v docker &> /dev/null; then
     exit 1
 fi
 
-if ! command -v docker-compose &> /dev/null; then
+# Check for Docker Compose (v2 or v1)
+if docker compose version &> /dev/null; then
+    DOCKER_COMPOSE="docker compose"
+    echo -e "${GREEN}✓ Docker Compose v2 detected${NC}"
+elif command -v docker-compose &> /dev/null; then
+    DOCKER_COMPOSE="docker-compose"
+    echo -e "${GREEN}✓ Docker Compose v1 detected${NC}"
+else
     echo -e "${RED}❌ Docker Compose is not installed. Please install Docker Compose first.${NC}"
     exit 1
 fi
-
-echo -e "${GREEN}✓ Docker and Docker Compose are installed${NC}"
 
 # Check if .env file exists
 if [ ! -f .env ]; then
@@ -39,22 +44,22 @@ echo -e "${GREEN}✓ Environment file found${NC}"
 # Pull latest images
 echo ""
 echo "📦 Pulling latest Docker images..."
-docker-compose pull
+$DOCKER_COMPOSE pull
 
 # Build application image
 echo ""
 echo "🔨 Building application image..."
-docker-compose build
+$DOCKER_COMPOSE build
 
 # Stop existing containers
 echo ""
 echo "🛑 Stopping existing containers..."
-docker-compose down
+$DOCKER_COMPOSE down
 
 # Start services
 echo ""
 echo "🚀 Starting services..."
-docker-compose up -d
+$DOCKER_COMPOSE up -d
 
 # Wait for services to be healthy
 echo ""
@@ -64,12 +69,12 @@ sleep 10
 # Check health
 echo ""
 echo "🏥 Checking service health..."
-docker-compose ps
+$DOCKER_COMPOSE ps
 
 # Pull Ollama model
 echo ""
 echo "📥 Pulling Ollama model (this may take a while)..."
-docker-compose exec -T ollama ollama pull llama2 || echo -e "${YELLOW}⚠ Could not pull Ollama model. Please run: docker-compose exec ollama ollama pull llama2${NC}"
+$DOCKER_COMPOSE exec -T ollama ollama pull llama2 || echo -e "${YELLOW}⚠ Could not pull Ollama model. Please run: $DOCKER_COMPOSE exec ollama ollama pull llama2${NC}"
 
 echo ""
 echo "================================================"
@@ -83,7 +88,7 @@ echo "   - Prometheus:    http://localhost:9090"
 echo "   - Grafana:       http://localhost:3000 (admin/admin)"
 echo ""
 echo "📊 Useful commands:"
-echo "   - View logs:     docker-compose logs -f swarm-node"
-echo "   - Stop services: docker-compose down"
-echo "   - Restart:       docker-compose restart"
+echo "   - View logs:     $DOCKER_COMPOSE logs -f swarm-node"
+echo "   - Stop services: $DOCKER_COMPOSE down"
+echo "   - Restart:       $DOCKER_COMPOSE restart"
 echo ""
