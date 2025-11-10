@@ -6,6 +6,8 @@
 
 #### Quick Start with Docker Compose (Recommended)
 
+This is the easiest way to get started - all dependencies are handled automatically:
+
 ```bash
 # Clone the repository
 git clone https://github.com/Kojima1954/Hive-Code.git
@@ -21,24 +23,51 @@ cd Hive-Code
 
 #### Manual Installation
 
+##### Linux/macOS
+
 ```bash
-# Install dependencies
+# Prerequisites: Python 3.11+, Docker, and Ollama
+sudo apt update && sudo apt install python3.11 python3-pip docker.io
+
+# Setup Python environment
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
+
+# Configure environment
+cp .env.example .env
+# Edit .env with your settings if needed
 
 # Start Redis
 docker run -d -p 6379:6379 redis:7-alpine
 
-# Start Ollama and pull model
-# Visit https://ollama.ai for installation
+# Install and configure Ollama from https://ollama.ai
 ollama pull llama2
-
-# Configure environment
-cp .env.example .env
-# Edit .env with your settings
 
 # Run the application
 python main.py
 ```
+
+##### Windows
+
+```powershell
+# Prerequisites: Python 3.11+, Docker Desktop, and Ollama
+choco install python docker-desktop
+
+# Setup development environment (automated)
+.\scripts\setup-dev.ps1
+
+# Start Redis
+docker run -d -p 6379:6379 redis:7-alpine
+
+# Install and configure Ollama from https://ollama.ai
+ollama pull llama2
+
+# Run the application
+python main.py
+```
+
+> **Note:** For a streamlined experience, Docker Compose is recommended over manual installation. See the [Quick Start section in README.md](README.md#-quick-start) for the simplest setup.
 
 ### 2. Using the Chat Interface
 
