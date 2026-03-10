@@ -184,7 +184,7 @@ class OllamaAgent(BaseAgent):
             messages.append({"role": "user", "content": message})
             
             # Generate response (run in executor to avoid blocking)
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             response = await loop.run_in_executor(
                 None,
                 lambda: self.client.chat(

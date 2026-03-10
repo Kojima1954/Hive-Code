@@ -130,9 +130,12 @@ class DDoSProtection:
             bool: True if banned, False otherwise
         """
         try:
-            ban_key = f"banned:{ip}"
+            ban_key = sanitize_redis_key(f"banned:{ip}")
             banned = await self.redis.get(ban_key)
             return banned is not None
+        except ValidationError as e:
+            logger.error(f"Invalid ban key: {e}")
+            return False
         except Exception as e:
             logger.error(f"Failed to check ban status: {e}")
             return False
@@ -146,9 +149,11 @@ class DDoSProtection:
             reason: Reason for ban
         """
         try:
-            ban_key = f"banned:{ip}"
+            ban_key = sanitize_redis_key(f"banned:{ip}")
             await self.redis.setex(ban_key, self.ban_duration, reason)
             logger.warning(f"Banned IP {ip}: {reason}")
+        except ValidationError as e:
+            logger.error(f"Invalid ban key: {e}")
         except Exception as e:
             logger.error(f"Failed to ban IP: {e}")
 
@@ -182,7 +187,11 @@ class DDoSProtection:
 
         if not allowed:
             # Ban IP if it exceeds limit multiple times
-            violation_key = f"violations:{ip}"
+            try:
+                violation_key = sanitize_redis_key(f"violations:{ip}")
+            except ValidationError as e:
+                logger.error(f"Invalid violation key: {e}")
+                return False
             violations = await self.redis.incr(violation_key)
             await self.redis.expire(violation_key, VIOLATION_WINDOW)  # 5 minutes
 
