@@ -52,6 +52,7 @@ class MemoryEntry:
     content: str
     timestamp: float = field(default_factory=time.time)
     importance: float = 1.0
+    original_importance: float = 1.0
     access_count: int = 0
     last_accessed: float = field(default_factory=time.time)
     embedding: Optional[List[float]] = None
@@ -207,7 +208,7 @@ class DiffMemManager:
             tags = validate_tags(tags)
         
         # Generate embedding
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         embedding = await loop.run_in_executor(
             self.executor,
             self._generate_embedding,
@@ -218,6 +219,7 @@ class DiffMemManager:
         memory = MemoryEntry(
             content=content,
             importance=importance,
+            original_importance=importance,
             embedding=embedding,
             tags=tags or [],
             source=source
@@ -238,7 +240,7 @@ class DiffMemManager:
         Args:
             memory: Memory entry to save
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(
             self.executor,
             self._save_to_git_sync,
@@ -304,7 +306,7 @@ class DiffMemManager:
             return []
         
         # Generate query embedding
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         query_embedding = await loop.run_in_executor(
             self.executor,
             self._generate_embedding,
@@ -378,12 +380,12 @@ class DiffMemManager:
         
         logger.info("Starting memory consolidation")
         
-        # Decay importance over time
+        # Decay importance over time (from original to avoid cumulative decay)
         current_time = time.time()
         for memory in self.memories:
             age_days = (current_time - memory.timestamp) / 86400
             decay_factor = np.exp(-age_days / MEMORY_DECAY_HALF_LIFE_DAYS)  # Configurable half-life
-            memory.importance *= decay_factor
+            memory.importance = memory.original_importance * decay_factor
         
         # Remove low-importance memories
         self.memories = [m for m in self.memories if m.importance > MEMORY_IMPORTANCE_THRESHOLD]

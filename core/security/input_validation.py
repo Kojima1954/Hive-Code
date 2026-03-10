@@ -16,8 +16,8 @@ MAX_TAGS_COUNT = 20
 # Regex patterns for validation
 USERNAME_PATTERN: Pattern = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 USER_ID_PATTERN: Pattern = re.compile(r'^[a-zA-Z0-9_-]{1,128}$')
-TAG_PATTERN: Pattern = re.compile(r'^[a-zA-Z0-9_-]{1,50}$')
-REDIS_KEY_PATTERN: Pattern = re.compile(r'^[a-zA-Z0-9:_-]{1,256}$')
+TAG_PATTERN: Pattern = re.compile(r'^[a-zA-Z0-9:_-]{1,50}$')
+REDIS_KEY_PATTERN: Pattern = re.compile(r'^[a-zA-Z0-9:._/\-]{1,256}$')
 
 
 class ValidationError(ValueError):
@@ -44,7 +44,7 @@ def sanitize_redis_key(key: str) -> str:
     if len(key) > 256:
         raise ValidationError("Redis key too long (max 256 characters)")
     
-    # Only allow alphanumeric, colon, underscore, and hyphen
+    # Only allow alphanumeric, colon, dot, slash, underscore, and hyphen
     if not REDIS_KEY_PATTERN.match(key):
         raise ValidationError("Redis key contains invalid characters")
     
@@ -146,7 +146,7 @@ def validate_tag(tag: str) -> str:
         raise ValidationError(f"Tag too long (max {MAX_TAG_LENGTH} characters)")
     
     if not TAG_PATTERN.match(tag):
-        raise ValidationError("Tag contains invalid characters (only alphanumeric, underscore, and hyphen allowed)")
+        raise ValidationError("Tag contains invalid characters (only alphanumeric, colon, underscore, and hyphen allowed)")
     
     return tag
 
