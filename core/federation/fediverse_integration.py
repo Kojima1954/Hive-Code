@@ -1,6 +1,7 @@
 """Fediverse integration with ActivityPub and blockchain verification."""
 
 import asyncio
+import base64
 import hashlib
 import json
 import logging
@@ -164,8 +165,6 @@ class FediverseConnector:
         Returns:
             Base64-encoded signature
         """
-        import base64
-        
         # Create canonical representation
         canonical = json.dumps(message_data, sort_keys=True, separators=(',', ':'))
         message_bytes = canonical.encode('utf-8')
@@ -199,8 +198,6 @@ class FediverseConnector:
         Returns:
             True if signature is valid, False otherwise
         """
-        import base64
-        
         try:
             # Import public key
             public_key = self.encryption.import_public_key(public_key_pem)

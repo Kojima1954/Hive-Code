@@ -258,7 +258,7 @@ class DiffMemManager:
                 
                 # Prepare data
                 data = memory.to_dict()
-                if self.compression_enabled and len(memory.content) > 1024:
+                if self.compression_enabled and len(memory.content) > COMPRESSION_THRESHOLD_BYTES:
                     # Compress large content
                     compressed = self._compress_content(memory.content)
                     data['content'] = compressed.hex()
@@ -315,18 +315,19 @@ class DiffMemManager:
         
         # Calculate similarity scores
         query_emb = np.array(query_embedding).reshape(1, -1)
-        memory_embs = np.array([m.embedding for m in self.memories if m.embedding])
+        embedded_memories = [(i, m) for i, m in enumerate(self.memories) if m.embedding]
         
-        if len(memory_embs) == 0:
+        if not embedded_memories:
             return []
         
+        memory_embs = np.array([m.embedding for _, m in embedded_memories])
         similarities = cosine_similarity(query_emb, memory_embs)[0]
         
         # Filter by importance and get top-k
         scored_memories = []
-        for i, memory in enumerate(self.memories):
+        for sim_idx, (_, memory) in enumerate(embedded_memories):
             if memory.importance >= min_importance:
-                score = similarities[i] * (1 + np.log1p(memory.importance))
+                score = similarities[sim_idx] * (1 + np.log1p(memory.importance))
                 scored_memories.append((score, memory))
         
         # Sort by score and return top-k
@@ -446,7 +447,8 @@ class DiffMemManager:
             }
         
         total_size = sum(len(m.content) for m in self.memories)
-        avg_importance = np.mean([m.importance for m in self.memories])
+        importances = [m.importance for m in self.memories]
+        avg_importance = sum(importances) / len(importances)
         
         return {
             "total_memories": len(self.memories),
