@@ -207,7 +207,7 @@ class DiffMemManager:
             tags = validate_tags(tags)
         
         # Generate embedding
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         embedding = await loop.run_in_executor(
             self.executor,
             self._generate_embedding,
@@ -238,7 +238,7 @@ class DiffMemManager:
         Args:
             memory: Memory entry to save
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(
             self.executor,
             self._save_to_git_sync,
@@ -304,25 +304,26 @@ class DiffMemManager:
             return []
         
         # Generate query embedding
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         query_embedding = await loop.run_in_executor(
             self.executor,
             self._generate_embedding,
             query
         )
         
-        # Calculate similarity scores
+        # Calculate similarity scores - only for memories that have embeddings
         query_emb = np.array(query_embedding).reshape(1, -1)
-        memory_embs = np.array([m.embedding for m in self.memories if m.embedding])
+        memories_with_embeddings = [m for m in self.memories if m.embedding]
         
-        if len(memory_embs) == 0:
+        if not memories_with_embeddings:
             return []
         
+        memory_embs = np.array([m.embedding for m in memories_with_embeddings])
         similarities = cosine_similarity(query_emb, memory_embs)[0]
         
         # Filter by importance and get top-k
         scored_memories = []
-        for i, memory in enumerate(self.memories):
+        for i, memory in enumerate(memories_with_embeddings):
             if memory.importance >= min_importance:
                 score = similarities[i] * (1 + np.log1p(memory.importance))
                 scored_memories.append((score, memory))
@@ -352,8 +353,9 @@ class DiffMemManager:
         if len(self.memories) < min_samples:
             return [self.memories]
         
-        # Get embeddings
-        embeddings = np.array([m.embedding for m in self.memories if m.embedding])
+        # Get memories that have embeddings
+        memories_with_embeddings = [m for m in self.memories if m.embedding]
+        embeddings = np.array([m.embedding for m in memories_with_embeddings])
         
         if len(embeddings) == 0:
             return [self.memories]
@@ -367,7 +369,7 @@ class DiffMemManager:
         for i, label in enumerate(labels):
             if label not in clusters:
                 clusters[label] = []
-            clusters[label].append(self.memories[i])
+            clusters[label].append(memories_with_embeddings[i])
         
         return list(clusters.values())
     

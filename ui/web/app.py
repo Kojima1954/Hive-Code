@@ -386,15 +386,13 @@ def create_app(
         
         # Add user to node if initialized
         if app.state.node:
-            await app.state.node.add_human_participant(user_id, username)
-        # Add user to node
-        try:
-            await app.state.node.add_human_participant(user_id, username)
-        except ValidationError as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=str(e)
-            )
+            try:
+                await app.state.node.add_human_participant(user_id, username)
+            except ValidationError as e:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=str(e)
+                )
         
         logger.info(f"User logged in: {username} (DEMO MODE)")
         
@@ -409,19 +407,18 @@ def create_app(
         message_req: MessageRequest,
         request: Request
     ):
-        """Send a message."""
+        """
+        Send a message.
+
+        Raises:
+            HTTPException: If validation fails or message processing fails
+        """
         if not app.state.node:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Node not initialized"
             )
         
-        """
-        Send a message.
-        
-        Raises:
-            HTTPException: If validation fails or message processing fails
-        """
         # Extract user from token (simplified)
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
@@ -456,20 +453,18 @@ def create_app(
     
     @app.get("/api/messages/history")
     async def get_history(limit: int = 50):
-        """Get message history."""
+        """
+        Get message history.
+
+        Raises:
+            HTTPException: If validation fails
+        """
         if not app.state.node:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Node not initialized"
             )
         
-        messages = await app.state.node.get_conversation_history(limit)
-        """
-        Get message history.
-        
-        Raises:
-            HTTPException: If validation fails
-        """
         try:
             limit = validate_limit(limit, max_limit=100)
             messages = await app.state.node.get_conversation_history(limit)
@@ -517,12 +512,8 @@ def create_app(
         """WebSocket endpoint for real-time chat."""
         if not app.state.connection_manager or not app.state.node:
             await websocket.close(code=1011, reason="Service not initialized")
-        """
-        WebSocket endpoint for real-time chat.
+            return
         
-        Raises:
-            ValidationError: If user_id is invalid
-        """
         # Validate user_id
         try:
             user_id = validate_username(user_id)

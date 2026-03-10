@@ -92,7 +92,7 @@ class TLSManager:
             .sign(private_key, hashes.SHA256(), default_backend())
         )
 
-        # Write private key
+        # Write private key with restricted permissions (owner read-only)
         with open(key_path, "wb") as f:
             f.write(
                 private_key.private_bytes(
@@ -101,6 +101,7 @@ class TLSManager:
                     encryption_algorithm=serialization.NoEncryption()
                 )
             )
+        os.chmod(key_path, 0o600)
 
         # Write certificate
         with open(cert_path, "wb") as f:
