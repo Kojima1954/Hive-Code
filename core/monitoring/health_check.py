@@ -127,18 +127,18 @@ class HealthChecker:
         if not isinstance(system, dict) or "error" in system:
             health["status"] = "unhealthy"
         else:
+            warnings = []
             if "memory" in system and system["memory"]["percent"] > 90:
                 health["status"] = "degraded"
-                health["warnings"] = health.get("warnings", [])
-                health["warnings"].append("High memory usage")
+                warnings.append("High memory usage")
             if "cpu_percent" in system and system["cpu_percent"] > 90:
                 health["status"] = "degraded"
-                health["warnings"] = health.get("warnings", [])
-                health["warnings"].append("High CPU usage")
+                warnings.append("High CPU usage")
             if "disk" in system and system["disk"]["percent"] > 90:
                 health["status"] = "degraded"
-                health["warnings"] = health.get("warnings", [])
-                health["warnings"].append("High disk usage")
+                warnings.append("High disk usage")
+            if warnings:
+                health["warnings"] = warnings
 
         return health
 
