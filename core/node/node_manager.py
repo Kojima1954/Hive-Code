@@ -253,6 +253,18 @@ class HumanAINode:
         
         logger.info(f"Initialized HumanAI node: {node_id}")
     
+    def _count_participants(self, participant_type: ParticipantType) -> int:
+        """
+        Count participants of a given type.
+        
+        Args:
+            participant_type: Type of participant to count
+            
+        Returns:
+            Number of participants of the given type
+        """
+        return sum(1 for p in self.participants.values() if p.type == participant_type)
+    
     def encrypt_message(self, content: str) -> str:
         """
         Encrypt message content.
@@ -325,7 +337,7 @@ class HumanAINode:
         active_participants.labels(
             node_id=self.node_id,
             participant_type=ParticipantType.HUMAN.value
-        ).set(sum(1 for p in self.participants.values() if p.type == ParticipantType.HUMAN))
+        ).set(self._count_participants(ParticipantType.HUMAN))
         
         logger.info(f"Added human participant: {name} ({user_id})")
         return participant
@@ -381,7 +393,7 @@ class HumanAINode:
         active_participants.labels(
             node_id=self.node_id,
             participant_type=ParticipantType.AI_AGENT.value
-        ).set(sum(1 for p in self.participants.values() if p.type == ParticipantType.AI_AGENT))
+        ).set(self._count_participants(ParticipantType.AI_AGENT))
         
         logger.info(f"Created AI agent: {name} ({agent_id}) with model {model}")
         return agent
@@ -546,8 +558,7 @@ class HumanAINode:
         limit = validate_limit(limit, max_limit=100)
         
         # Convert deque to list and get last N messages
-        messages = list(self.message_queue)
-        return messages[-limit:] if len(messages) > limit else messages
+        return list(self.message_queue)[-limit:]
     
     async def generate_node_summary(self) -> str:
         """
@@ -559,8 +570,8 @@ class HumanAINode:
         summary_parts = [
             f"Node ID: {self.node_id}",
             f"Total Participants: {len(self.participants)}",
-            f"Human Participants: {sum(1 for p in self.participants.values() if p.type == ParticipantType.HUMAN)}",
-            f"AI Agents: {sum(1 for p in self.participants.values() if p.type == ParticipantType.AI_AGENT)}",
+            f"Human Participants: {self._count_participants(ParticipantType.HUMAN)}",
+            f"AI Agents: {self._count_participants(ParticipantType.AI_AGENT)}",
             f"Messages in Queue: {len(self.message_queue)}",
         ]
         
@@ -581,8 +592,8 @@ class HumanAINode:
         return {
             "node_id": self.node_id,
             "participants": len(self.participants),
-            "human_participants": sum(1 for p in self.participants.values() if p.type == ParticipantType.HUMAN),
-            "ai_agents": sum(1 for p in self.participants.values() if p.type == ParticipantType.AI_AGENT),
+            "human_participants": self._count_participants(ParticipantType.HUMAN),
+            "ai_agents": self._count_participants(ParticipantType.AI_AGENT),
             "messages_in_queue": len(self.message_queue),
             "memory_stats": self.memory_manager.get_stats(),
         }

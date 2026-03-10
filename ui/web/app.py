@@ -118,7 +118,9 @@ class ConnectionManager:
             exclude: Optional user ID to exclude from broadcast
         """
         disconnected = []
-        for user_id, connection in self.active_connections.items():
+        # Snapshot to avoid RuntimeError if connections change during iteration
+        connections = list(self.active_connections.items())
+        for user_id, connection in connections:
             if user_id != exclude:
                 try:
                     await connection.send_text(message)
@@ -300,11 +302,12 @@ def create_app(
     # JWT authentication
     def create_token(user_id: str, username: str) -> str:
         """Create JWT token."""
+        now = datetime.now(timezone.utc)
         payload = {
             "user_id": user_id,
             "username": username,
-            "exp": datetime.now(timezone.utc) + timedelta(hours=24),
-            "iat": datetime.now(timezone.utc)
+            "exp": now + timedelta(hours=24),
+            "iat": now
         }
         return jwt.encode(payload, app.state.jwt_secret, algorithm="HS256")
     
