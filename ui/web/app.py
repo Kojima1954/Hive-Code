@@ -215,7 +215,13 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    
+
+    # Rate limiting middleware
+    # fail_open=True allows requests during Redis outages (prioritizes availability)
+    # fail_open=False rejects requests during Redis outages (prioritizes security)
+    fail_open = os.getenv("RATE_LIMIT_FAIL_OPEN", "true").lower() == "true"
+    app.add_middleware(RateLimitMiddleware, redis_client=None, fail_open=fail_open)
+
     # State variables
     app.state.redis_client = None
     app.state.node = None
@@ -300,12 +306,6 @@ def create_app(
         
         # Initialize health checker
         app.state.health_checker = HealthChecker(app.state.redis_client)
-        
-        # Add rate limiting middleware
-        # fail_open=True allows requests during Redis outages (prioritizes availability)
-        # fail_open=False rejects requests during Redis outages (prioritizes security)
-        fail_open = os.getenv("RATE_LIMIT_FAIL_OPEN", "true").lower() == "true"
-        app.add_middleware(RateLimitMiddleware, redis_client=app.state.redis_client, fail_open=fail_open)
         
         logger.info("Swarm Network application started successfully")
     
