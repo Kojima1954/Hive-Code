@@ -87,6 +87,10 @@ services:
       - OLLAMA_MODEL=${OLLAMA_MODEL:-llama2}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
       - PROMETHEUS_ENABLED=true
+      - LOCAL_SUMMARY_MODEL=${LOCAL_SUMMARY_MODEL:-phi3:mini}
+      - SUMMARY_INTERVAL=${SUMMARY_INTERVAL:-300}
+      - SUMMARY_ENABLED=${SUMMARY_ENABLED:-true}
+      - FEDERATION_ENABLED=${FEDERATION_ENABLED:-true}
     volumes:
       - ./logs:/app/logs
       - ./memory:/app/memory

@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
-from core.node.node_manager import HumanAINode, Message
+from core.node.node_manager import HumanAINode, Message, SUMMARY_IMPORTANCE
 from core.memory.diffmem_integration import DiffMemManager
 from core.security.rate_limiting import RateLimitMiddleware
 from core.security.input_validation import validate_username, validate_limit, ValidationError
@@ -165,7 +165,9 @@ def create_app(
     redis_url: str = "redis://localhost:6379",
     ollama_host: str = "http://localhost:11434",
     jwt_secret: str = "change-this",
-    allowed_origins: List[str] = ["*"]
+    allowed_origins: List[str] = ["*"],
+    summary_model: str = "phi3:mini",
+    summary_interval: int = 300,
 ) -> FastAPI:
     """
     Create and configure FastAPI application.
@@ -220,9 +222,12 @@ def create_app(
     app.state.memory_manager = None
     app.state.connection_manager = None
     app.state.health_checker = None
+    app.state.federation_connector = None
     app.state.jwt_secret = jwt_secret
     app.state.ollama_host = ollama_host
     app.state.redis_url = redis_url
+    app.state.summary_model = summary_model
+    app.state.summary_interval = summary_interval
     
     @app.on_event("startup")
     async def startup_event():
@@ -246,13 +251,37 @@ def create_app(
         app.state.memory_manager = DiffMemManager()
         await app.state.memory_manager.start_background_tasks()
         
+        # Initialize federation connector
+        domain = os.getenv("DOMAIN", "localhost")
+        federation_enabled = os.getenv("FEDERATION_ENABLED", "true").lower() == "true"
+
+        if federation_enabled:
+            try:
+                from core.federation.fediverse_integration import FediverseConnector
+                app.state.federation_connector = FediverseConnector(
+                    actor_id="main",
+                    domain=domain,
+                )
+            except Exception as e:
+                logger.warning(f"Federation connector init failed: {e}")
+                app.state.federation_connector = None
+
         # Initialize node
+        summary_enabled = os.getenv("SUMMARY_ENABLED", "true").lower() == "true"
         app.state.node = HumanAINode(
             node_id="main",
             redis_client=app.state.redis_client,
-            memory_manager=app.state.memory_manager
+            memory_manager=app.state.memory_manager,
+            summary_model=app.state.summary_model,
+            summary_interval=app.state.summary_interval,
+            enable_summary=summary_enabled,
+            federation_connector=app.state.federation_connector,
         )
-        
+
+        # Start summary loop
+        if summary_enabled:
+            await app.state.node.start_summary_loop()
+
         # Create default AI agent
         await app.state.node.create_ai_agent(
             agent_id="assistant",
@@ -261,7 +290,7 @@ def create_app(
             ollama_host=app.state.ollama_host,
             system_prompt="You are SwarmBot, a helpful AI assistant in a swarm intelligence network. Provide concise, helpful responses."
         )
-        
+
         # Initialize connection manager
         app.state.connection_manager = ConnectionManager(
             app.state.redis_client,
@@ -294,9 +323,12 @@ def create_app(
         if app.state.memory_manager:
             await app.state.memory_manager.stop_background_tasks()
         
+        if app.state.federation_connector:
+            await app.state.federation_connector.close()
+
         if app.state.redis_client:
             await app.state.redis_client.close()
-        
+
         logger.info("Shutdown complete")
     
     # JWT authentication
@@ -583,6 +615,93 @@ def create_app(
             logger.error(f"WebSocket error for {user_id}: {e}")
             app.state.connection_manager.disconnect(user_id)
     
+    # --- ActivityPub endpoints ---
+
+    @app.get("/actors/{actor_id}")
+    async def activitypub_actor(actor_id: str):
+        """Serve ActivityPub actor profile."""
+        if not app.state.federation_connector:
+            raise HTTPException(status_code=404, detail="Federation not configured")
+        profile = app.state.federation_connector.create_actor_profile()
+        return JSONResponse(
+            content=profile,
+            media_type="application/activity+json",
+        )
+
+    @app.post("/actors/{actor_id}/inbox")
+    async def activitypub_inbox(actor_id: str, request: Request):
+        """ActivityPub inbox -- receives activities from federated nodes."""
+        body = await request.json()
+
+        activity_type = body.get("type")
+        if activity_type != "Create":
+            return JSONResponse({"status": "ignored"}, status_code=202)
+
+        obj = body.get("object", {})
+        content_str = obj.get("content", "")
+
+        try:
+            content_data = json.loads(content_str)
+        except (json.JSONDecodeError, TypeError):
+            content_data = {"summary": content_str}
+
+        if content_data.get("type") == "NodeSummary":
+            summary_text = content_data.get("summary", "")
+            source_node = content_data.get("node_id", "unknown")
+
+            if app.state.node and summary_text:
+                await app.state.memory_manager.add_memory(
+                    content=summary_text,
+                    importance=SUMMARY_IMPORTANCE * 0.8,
+                    tags=["summary", "federated", f"source_node:{source_node}"],
+                    source=f"federation:{source_node}",
+                )
+
+            logger.info(f"Received federated summary from node {source_node}")
+            return JSONResponse({"status": "accepted"}, status_code=202)
+
+        return JSONResponse({"status": "ignored"}, status_code=202)
+
+    # --- Summary API endpoints ---
+
+    @app.get("/api/node/summaries")
+    async def get_summaries(limit: int = 10):
+        """Get recent summaries from memory."""
+        if not app.state.node:
+            raise HTTPException(status_code=503, detail="Node not initialized")
+
+        memories = await app.state.memory_manager.retrieve_memories(
+            query="conversation summary",
+            top_k=limit,
+            min_importance=0.0,
+        )
+        return [
+            {
+                "content": m.content,
+                "tags": m.tags,
+                "source": m.source,
+                "timestamp": m.timestamp,
+            }
+            for m in memories
+            if "summary" in (m.tags or [])
+        ]
+
+    @app.post("/api/node/summarize")
+    async def trigger_summarization():
+        """Manually trigger summarization."""
+        if not app.state.node:
+            raise HTTPException(status_code=503, detail="Node not initialized")
+        await app.state.node._run_summarization()
+        return {"status": "summarization_triggered"}
+
+    @app.post("/api/federation/peers")
+    async def add_peer(inbox_url: str):
+        """Register a federated peer node."""
+        if not app.state.node:
+            raise HTTPException(status_code=503, detail="Node not initialized")
+        app.state.node.add_peer(inbox_url)
+        return {"status": "peer_added", "inbox_url": inbox_url}
+
     return app
 
 
@@ -591,5 +710,7 @@ app = create_app(
     redis_url=os.getenv("REDIS_URL", "redis://localhost:6379"),
     ollama_host=os.getenv("OLLAMA_HOST", "http://localhost:11434"),
     jwt_secret=os.getenv("JWT_SECRET", "change-this-secret-key"),
-    allowed_origins=os.getenv("ALLOWED_ORIGINS", "*").split(",")
+    allowed_origins=os.getenv("ALLOWED_ORIGINS", "*").split(","),
+    summary_model=os.getenv("LOCAL_SUMMARY_MODEL", "phi3:mini"),
+    summary_interval=int(os.getenv("SUMMARY_INTERVAL", "300")),
 )

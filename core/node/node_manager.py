@@ -31,6 +31,13 @@ MAX_MESSAGE_QUEUE_SIZE = 1000
 MAX_CONTEXT_MESSAGES = 10
 AI_AGENT_CONTEXT_WINDOW = 5  # Number of recent messages to include in AI context
 
+# Local summary constants
+DEFAULT_SUMMARY_MODEL = "phi3:mini"
+DEFAULT_SUMMARY_INTERVAL = 300  # 5 minutes
+SUMMARY_MIN_MESSAGES = 5  # Don't summarize fewer than 5 messages
+SUMMARY_IMPORTANCE = 8.0  # High importance for summaries in memory
+SUMMARY_BATCH_SIZE = 50  # Max messages per summary batch
+
 
 class ParticipantType(Enum):
     """Type of participant in the conversation."""
@@ -207,6 +214,77 @@ class OllamaAgent(BaseAgent):
             return f"Sorry, I encountered an error: {str(e)}"
 
 
+class LocalSummaryAgent(BaseAgent):
+    """Local LLM agent dedicated to summarizing node conversations.
+
+    Always connects to localhost Ollama only (resistance cell architecture).
+    Uses a small model (default phi3:mini) for fast, private summarization.
+    """
+
+    LOCAL_HOST = "http://localhost:11434"
+    DEFAULT_MODEL = DEFAULT_SUMMARY_MODEL
+
+    def __init__(
+        self,
+        agent_id: str,
+        name: str = "SummaryCourier",
+        model: str = None,
+    ):
+        super().__init__(agent_id, name)
+        self.model = model or self.DEFAULT_MODEL
+        self.system_prompt = (
+            "You are a concise summarizer. Given a conversation, produce a brief summary "
+            "capturing: key topics discussed, decisions made, questions raised, and "
+            "action items. Keep the summary under 200 words. Output only the summary."
+        )
+
+        try:
+            self.client = ollama.Client(host=self.LOCAL_HOST)
+            logger.info(f"Initialized LocalSummaryAgent '{name}' with model '{model or self.DEFAULT_MODEL}'")
+        except Exception as e:
+            logger.error(f"Failed to initialize local Ollama client: {e}")
+            self.client = None
+
+    async def generate_response(self, message: str, context: List[Message] = None) -> str:
+        """Satisfy BaseAgent interface -- delegates to summarization."""
+        return await self.summarize_conversation(context or [])
+
+    async def summarize_conversation(self, messages: List[Message]) -> str:
+        """Summarize a list of conversation messages using the local LLM."""
+        if not self.client:
+            return "[Summary unavailable: local LLM not accessible]"
+
+        if not messages:
+            return "[No messages to summarize]"
+
+        # Format messages into a conversation transcript
+        transcript_lines = []
+        for msg in messages:
+            transcript_lines.append(f"[{msg.sender}]: {msg.content}")
+        transcript = "\n".join(transcript_lines)
+
+        try:
+            loop = asyncio.get_running_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.client.chat(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": self.system_prompt},
+                        {"role": "user", "content": transcript},
+                    ]
+                )
+            )
+
+            if response and 'message' in response:
+                return response['message']['content']
+            return "[Summary generation returned no content]"
+
+        except Exception as e:
+            logger.error(f"Local summarization failed: {e}")
+            return f"[Summary unavailable: {e}]"
+
+
 class HumanAINode:
     """
     Node managing human and AI participants with conversation capabilities.
@@ -217,40 +295,65 @@ class HumanAINode:
         node_id: str,
         redis_client: redis.Redis,
         memory_manager: DiffMemManager = None,
-        encryption_key: bytes = None
+        encryption_key: bytes = None,
+        summary_model: str = None,
+        summary_interval: int = DEFAULT_SUMMARY_INTERVAL,
+        enable_summary: bool = True,
+        federation_connector=None,
     ):
         """
         Initialize HumanAI node.
-        
+
         Args:
             node_id: Unique node identifier
             redis_client: Redis client for pub/sub
             memory_manager: Optional DiffMem manager
             encryption_key: Optional Fernet encryption key
+            summary_model: Model name for local summary LLM
+            summary_interval: Seconds between automatic summarizations
+            enable_summary: Whether to enable local summarization
+            federation_connector: Optional FediverseConnector for federation
         """
         self.node_id = node_id
         self.redis = redis_client
         self.memory_manager = memory_manager or DiffMemManager()
-        
+
         # Initialize encryption
         self.encryption_key = encryption_key or Fernet.generate_key()
         self.cipher = Fernet(self.encryption_key)
-        
+
         # Participants
         self.participants: Dict[str, NodeParticipant] = {}
         self.agents: Dict[str, BaseAgent] = {}
-        
+
         # Message queue (use deque for O(1) operations)
         self.message_queue: deque = deque(maxlen=MAX_MESSAGE_QUEUE_SIZE)  # Auto-removes old messages
         self.max_queue_size = MAX_MESSAGE_QUEUE_SIZE  # Kept for backwards compatibility
-        
+
         # Redis pub/sub
         self.pubsub = self.redis.pubsub()
         self.channel = f"node:{node_id}"
-        
+
         # Background tasks
         self._listener_task = None
-        
+
+        # Local summary agent
+        self.summary_agent: Optional[LocalSummaryAgent] = None
+        self.summary_interval = summary_interval
+        self.enable_summary = enable_summary
+        self._summary_task = None
+        self._last_summarized_index = 0
+        self._summarizing = asyncio.Lock()
+        self.federation_connector = federation_connector
+        self.peer_inboxes: List[str] = []
+
+        if enable_summary:
+            self.summary_agent = LocalSummaryAgent(
+                agent_id=f"{node_id}_summarizer",
+                name=f"SummaryCourier-{node_id}",
+                model=summary_model or DEFAULT_SUMMARY_MODEL,
+            )
+
         logger.info(f"Initialized HumanAI node: {node_id}")
     
     def _count_participants(self, participant_type: ParticipantType) -> int:
@@ -529,15 +632,93 @@ class HumanAINode:
         self._listener_task = asyncio.create_task(listen())
         logger.info("Started message listener")
     
+    async def start_summary_loop(self):
+        """Start periodic summarization background task."""
+        if not self.enable_summary or not self.summary_agent:
+            return
+
+        async def summary_loop():
+            while True:
+                await asyncio.sleep(self.summary_interval)
+                try:
+                    await self._run_summarization()
+                except Exception as e:
+                    logger.error(f"Summarization failed: {e}")
+
+        self._summary_task = asyncio.create_task(summary_loop())
+        logger.info(f"Started summary loop (interval={self.summary_interval}s)")
+
+    async def _run_summarization(self):
+        """Summarize unsummarized messages and store/federate the result."""
+        if not self.summary_agent:
+            return
+
+        async with self._summarizing:
+            all_messages = list(self.message_queue)
+            unsummarized = all_messages[self._last_summarized_index:]
+
+            if len(unsummarized) < SUMMARY_MIN_MESSAGES:
+                return
+
+            batch = unsummarized[:SUMMARY_BATCH_SIZE]
+            summary_text = await self.summary_agent.summarize_conversation(batch)
+
+            # Store in memory with high importance
+            await self.memory_manager.add_memory(
+                content=summary_text,
+                importance=SUMMARY_IMPORTANCE,
+                tags=["summary", "local", f"node:{self.node_id}"],
+                source=self.summary_agent.agent_id,
+            )
+
+            self._last_summarized_index += len(batch)
+
+            # Federate if connector available
+            if self.federation_connector:
+                await self._federate_summary(summary_text)
+
+            logger.info(f"Summarized {len(batch)} messages into summary")
+
+    async def _federate_summary(self, summary_text: str):
+        """Publish summary as an ActivityPub activity to followers."""
+        activity = self.federation_connector.create_activity(
+            activity_type="Create",
+            content=json.dumps({
+                "type": "NodeSummary",
+                "node_id": self.node_id,
+                "summary": summary_text,
+                "timestamp": time.time(),
+                "message_count": self._last_summarized_index,
+            }),
+        )
+
+        for peer_inbox in self.peer_inboxes:
+            try:
+                await self.federation_connector.send_activity(peer_inbox, activity)
+            except Exception as e:
+                logger.error(f"Failed to send summary to {peer_inbox}: {e}")
+
+    def add_peer(self, inbox_url: str):
+        """Register a federated peer node's inbox URL."""
+        if inbox_url not in self.peer_inboxes:
+            self.peer_inboxes.append(inbox_url)
+
     async def stop_listener(self):
-        """Stop Redis pub/sub listener."""
+        """Stop Redis pub/sub listener and summary loop."""
+        if self._summary_task:
+            self._summary_task.cancel()
+            try:
+                await self._summary_task
+            except asyncio.CancelledError:
+                pass
+
         if self._listener_task:
             self._listener_task.cancel()
             try:
                 await self._listener_task
             except asyncio.CancelledError:
                 pass
-        
+
         await self.pubsub.unsubscribe(self.channel)
         logger.info("Stopped message listener")
     

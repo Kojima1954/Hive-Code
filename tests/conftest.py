@@ -6,6 +6,7 @@ import redis.asyncio as redis
 from pathlib import Path
 import tempfile
 import shutil
+from unittest.mock import patch
 
 from core.node.node_manager import HumanAINode
 from core.memory.diffmem_integration import DiffMemManager
