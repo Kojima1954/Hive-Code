@@ -257,6 +257,27 @@ def create_app(
         app.state.memory_manager = DiffMemManager()
         await app.state.memory_manager.start_background_tasks()
         
+        # Ensure Ollama is installed, running, and models are pulled
+        auto_install_ollama = os.getenv("OLLAMA_AUTO_INSTALL", "true").lower() == "true"
+        summary_enabled = os.getenv("SUMMARY_ENABLED", "true").lower() == "true"
+        models_to_pull = [os.getenv("OLLAMA_MODEL", "llama2")]
+        if summary_enabled:
+            models_to_pull.append(app.state.summary_model)
+        # Deduplicate
+        models_to_pull = list(dict.fromkeys(models_to_pull))
+
+        from core.utils.ollama_setup import ensure_ollama
+        ollama_ready = await ensure_ollama(
+            host=app.state.ollama_host,
+            models=models_to_pull,
+            auto_install=auto_install_ollama,
+        )
+        if not ollama_ready:
+            logger.warning(
+                "Ollama is not fully available. LLM features will be degraded. "
+                "Install manually: https://ollama.com/download"
+            )
+
         # Initialize federation connector
         domain = os.getenv("DOMAIN", "localhost")
         federation_enabled = os.getenv("FEDERATION_ENABLED", "true").lower() == "true"

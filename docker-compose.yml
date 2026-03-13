@@ -91,6 +91,7 @@ services:
       - SUMMARY_INTERVAL=${SUMMARY_INTERVAL:-300}
       - SUMMARY_ENABLED=${SUMMARY_ENABLED:-true}
       - FEDERATION_ENABLED=${FEDERATION_ENABLED:-true}
+      - OLLAMA_AUTO_INSTALL=${OLLAMA_AUTO_INSTALL:-false}
     volumes:
       - ./logs:/app/logs
       - ./memory:/app/memory
